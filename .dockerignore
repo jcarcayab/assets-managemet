@@ -1,0 +1,11 @@
+#Docker
+Dockerfile
+docker-compose.yml
+
+#APP
+.env
+.venv
+
+#DB
+pgdata
+*.sqlite3
