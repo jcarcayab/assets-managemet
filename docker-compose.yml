@@ -1,9 +1,14 @@
 version: "1.00"
+x-postgres-common:
+  &postgres-common
+
 
 services:
-  web:
+
+  backend:
     build: .
     restart: unless-stopped
+    command: ["python","manage.py","runserver","0.0.0.0:8000"]
     volumes:
       - .:/app
     ports:
@@ -11,33 +16,119 @@ services:
     env_file:
       - path: ./.env
         required: true
+    environment:
+      ALLOWED_HOSTS: backend,127.0.0.1
+    deploy:
+      replicas: 2
     develop:
       watch:
         - action: sync
           path: .
           target: /app
     links:
-      - db
+      - db1
     depends_on:
-      - db
-  db:
-    image: postgres
-    hostname: project1_db
-    container_name: project1-db
+      - db1
+      - redis
+    networks:
+      - network_db
+      - network_backend
+      - network_redis
+
+  redis:
+    image: redis:latest
+    deploy:
+      replicas: 2
+    networks:
+      - network_redis
+
+  db1:
+    command: |
+        postgres 
+        -c wal_level=replica 
+        -c hot_standby=on 
+        -c max_wal_senders=10 
+        -c max_replication_slots=10 
+        -c hot_standby_feedback=on
+    image: postgres:16
     restart: always
+    user: root
+    healthcheck:
+      test: 'pg_isready -U ${POSTGRES_USER} --dbname=postgres'
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    hostname: project1_db
+    container_name: project1_db
     shm_size: 128mb
     ports:
       - "5432:5432"
     volumes:
-      - ./pgdata:/var/lib/postgresql/data
+      - ./docker/db:/docker-entrypoint-initdb.d/
+      - ./docker/pgdata1:/var/lib/postgresql/data
     env_file:
       - path: ./.env
         required: true
-  grafana:
-    image: grafana/grafana
-    container_name: grafana
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: "scram-sha-256\nhost replication all 0.0.0.0/0 md5"
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    networks:
+      - network_db
+  db2:
+    image: postgres:16
+    restart: always
+    user: postgres
+    healthcheck:
+      test: 'pg_isready -U ${POSTGRES_USER} --dbname=postgres'
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    hostname: project2_db
+    container_name: project2_db
     ports:
-      - 3000:3000
-volumes:
-  web-django:
-  web-static:
+      - 5433:5432
+    environment:
+      PGUSER: replicator
+      PGPASSWORD: replicator_password
+    command: |
+      bash -c "
+      until pg_basebackup --pgdata=/var/lib/postgresql/data -R --slot=replication_slot --host=db1 --port=5432
+      do
+      echo 'Waiting for primary to connect...'
+      sleep 1s
+      done
+      echo 'Backup done, starting replica...'
+      chmod 0700 /var/lib/postgresql/data
+      postgres
+      "
+    links:
+      - db1
+    depends_on:
+      - db1
+    networks:
+      - network_db
+
+  nginx:
+    image: nginx:latest
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./static:/home/app/web/static/
+    depends_on:
+      - backend
+    ports:
+      - 80:80
+    networks:
+      - default
+      - network_backend
+
+
+networks:
+  network_redis:
+    internal: true
+    name: int_redis
+  network_db:
+    internal: true
+    name: int_db
+  network_backend:
+    internal: true
+    name: int_backend
