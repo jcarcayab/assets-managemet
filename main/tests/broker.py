@@ -1,7 +1,7 @@
 from django.test import TestCase
 
 from main.models import Broker
-from .base import print_test_case_result
+from .utils import print_test_case_result
 
 class BrokersTestCase(TestCase):
 

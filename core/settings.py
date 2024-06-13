@@ -66,7 +66,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    'main'
+    'main',
 ]
 
 MIDDLEWARE = [
@@ -165,3 +165,5 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # CSRF_COOKIE_SECURE = False
 
 CSRF_TRUSTED_ORIGINS = ['http://localhost']
+
+# from .settings_local import *

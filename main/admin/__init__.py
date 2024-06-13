@@ -1,1 +1,1 @@
-from .brokers import BrokerAdmin
+from .broker import BrokerAdmin

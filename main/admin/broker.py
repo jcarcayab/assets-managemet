@@ -1,5 +1,7 @@
 from django.contrib import admin
-from ..models import Broker
+
+from main.models.broker import Broker
+
 
 @admin.register(Broker)
 class BrokerAdmin(admin.ModelAdmin):
