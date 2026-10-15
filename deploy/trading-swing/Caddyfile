@@ -1,0 +1,16 @@
+{
+	# swing-caddy owns :80/:443 and its admin API; stay out of their way.
+	admin off
+	auto_https disable_redirects
+	# Clients dialing an IP send no SNI.
+	default_sni 10.8.0.1
+}
+
+https://10.8.0.1:8443 {
+	bind 10.8.0.1
+	# Certificate from Caddy's own local CA (no public DNS name for a Let's Encrypt cert).
+	# Trust its root once per device: see deploy/trading-swing/README.md.
+	tls internal
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8090
+}

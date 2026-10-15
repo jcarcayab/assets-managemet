@@ -1,0 +1,62 @@
+# Patrimonio on the trading-swing host, next to (and independent from) the swing stack.
+# Reachable only through the VPN: https://10.8.0.1:8443
+#
+# Memory is tight on this box (~2 GB shared with swing), hence SQLite instead of another Postgres,
+# one gunicorn worker, and hard memory limits.
+name: patrimonio
+
+x-app: &app
+  image: patrimonio-web
+  env_file: .env
+  environment:
+    DATABASE_URL: sqlite:////data/db.sqlite3
+  volumes:
+    - ./data:/data
+  restart: unless-stopped
+
+services:
+  web:
+    <<: *app
+    build:
+      context: ../..
+      dockerfile: deploy/trading-swing/Dockerfile
+    container_name: patrimonio-web
+    ports:
+      - "127.0.0.1:8090:8000" # only Caddy (host network) talks to it
+    mem_limit: 450m
+
+  # Hourly prices; once a day after 21:00 UTC: Plaid sync + net-worth snapshot.
+  # Idle it's just a sleeping shell; Python only runs while a job does.
+  scheduler:
+    <<: *app
+    container_name: patrimonio-scheduler
+    depends_on:
+      - web
+    mem_limit: 350m
+    command: >
+      sh -c 'sleep 120; while true; do
+        python manage.py refresh_prices;
+        day=$$(date -u +%F);
+        if [ "$$(date -u +%H)" -ge 21 ] && [ ! -e /data/.daily-$$day ]; then
+          python manage.py plaid_sync; python manage.py take_snapshot --no-refresh; touch /data/.daily-$$day;
+          find /data -maxdepth 1 -name ".daily-*" -mtime +7 -delete;
+        fi;
+        sleep 3600;
+      done'
+
+  # Host network so it can bind only the VPN address; if the VPN isn't up yet after a reboot,
+  # Caddy exits and Docker restarts it until the address exists.
+  caddy:
+    image: caddy:2.8.4-alpine
+    container_name: patrimonio-caddy
+    network_mode: host
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # keeps the internal CA stable, so devices only trust it once
+      - caddy-config:/config
+    mem_limit: 64m
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
