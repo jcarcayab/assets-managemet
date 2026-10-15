@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, api } from '../api'
 import type { PlaidAccount, PlaidItem, PlaidStatus, SyncReport } from '../api'
 import { useAccounts } from '../hooks'
 import { dateTime, money } from '../format'
-import { openPlaidLink } from '../plaidLink'
+import { openPlaidLink, takePendingOAuth } from '../plaidLink'
 
 const NEW = 'new'
 const OFF = 'off'
@@ -86,7 +86,7 @@ function ItemCard({ item, refresh }: { item: PlaidItem; refresh: () => void }) {
   const reconnect = () =>
     run(async () => {
       const { link_token } = await api<{ link_token: string }>('/plaid/link-token/', { body: { item: item.id } })
-      if (await openPlaidLink(link_token)) setReport(await syncItem(item.id))
+      if (await openPlaidLink(link_token, { itemId: item.id })) setReport(await syncItem(item.id))
     })
 
   const disconnect = () => {
@@ -152,6 +152,28 @@ export default function Connections() {
   const items = useQuery({ queryKey: ['plaid-items'], queryFn: () => api<PlaidItem[]>('/plaid/items/') })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const resumed = useRef(false)
+
+  // Back from an OAuth bank: reopen Link with the same token to finish, then clean the URL.
+  useEffect(() => {
+    if (resumed.current) return
+    resumed.current = true
+    const pending = takePendingOAuth()
+    if (!pending) return
+    window.history.replaceState(null, '', window.location.pathname)
+    setBusy(true)
+    openPlaidLink(pending.linkToken, { resumeOAuth: true })
+      .then(async (publicToken) => {
+        if (!publicToken) return
+        if (pending.itemId) await syncItem(pending.itemId)
+        else await api('/plaid/exchange/', { body: { public_token: publicToken } })
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => {
+        setBusy(false)
+        items.refetch()
+      })
+  }, [items])
 
   const connect = async () => {
     setBusy(true)

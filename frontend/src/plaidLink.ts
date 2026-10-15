@@ -4,9 +4,34 @@ type LinkHandler = { open: () => void; destroy: () => void }
 type PlaidFactory = {
   create: (config: {
     token: string
+    receivedRedirectUri?: string
     onSuccess: (publicToken: string, metadata: unknown) => void
     onExit: (error: { display_message?: string; error_message?: string } | null) => void
   }) => LinkHandler
+}
+
+// OAuth banks send the browser away and back to PLAID_REDIRECT_URI (?oauth_state_id=…). Link must then be
+// reopened with the same token, so remember what we were doing across that round trip.
+const PENDING_KEY = 'plaid-link-pending'
+export type PendingLink = { linkToken: string; itemId: number | null }
+
+function rememberPending(pending: PendingLink) {
+  try {
+    sessionStorage.setItem(PENDING_KEY, JSON.stringify(pending))
+  } catch {
+    // storage blocked: OAuth banks won't resume, the rest still works
+  }
+}
+
+export function takePendingOAuth(): PendingLink | null {
+  if (!new URLSearchParams(window.location.search).has('oauth_state_id')) return null
+  try {
+    const raw = sessionStorage.getItem(PENDING_KEY)
+    sessionStorage.removeItem(PENDING_KEY)
+    return raw ? (JSON.parse(raw) as PendingLink) : null
+  } catch {
+    return null
+  }
 }
 
 declare global {
@@ -34,12 +59,20 @@ function loadPlaid(): Promise<PlaidFactory> {
   return loading
 }
 
-/** Opens Link; resolves with the public token, or null if the user closed it. */
-export async function openPlaidLink(linkToken: string): Promise<string | null> {
+/**
+ * Opens Link; resolves with the public token, or null if the user closed it.
+ * `itemId` marks a reconnection (update mode); `resumeOAuth` finishes a flow coming back from an OAuth bank.
+ */
+export async function openPlaidLink(
+  linkToken: string,
+  { itemId = null, resumeOAuth = false }: { itemId?: number | null; resumeOAuth?: boolean } = {},
+): Promise<string | null> {
   const Plaid = await loadPlaid()
+  if (!resumeOAuth) rememberPending({ linkToken, itemId })
   return new Promise((resolve, reject) => {
     const handler = Plaid.create({
       token: linkToken,
+      ...(resumeOAuth ? { receivedRedirectUri: window.location.href } : {}),
       onSuccess: (publicToken) => {
         handler.destroy()
         resolve(publicToken)

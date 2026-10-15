@@ -156,6 +156,13 @@ def asset_for_security(owner, sec: dict | None) -> Asset:
             "name": name, "asset_class": AssetClass.CRYPTO, "price_source": PriceSource.COINGECKO,
             "source_id": COINGECKO_IDS.get(symbol, symbol.lower()), "sector": "Crypto",
         }
+    elif kind == "derivative":
+        # Options and the like: no usable live quote, so the institution's price is the source.
+        symbol = (ticker or f"PLAID-{sec['security_id'][:8]}").upper()[:30]
+        defaults = {
+            "name": name, "asset_class": AssetClass.OTHER, "price_source": PriceSource.MANUAL,
+            "manual_price": _d(sec.get("close_price")) or None,
+        }
     elif ticker:
         symbol = ticker
         asset_class = AssetClass.BOND if kind == "fixed income" else AssetClass.STOCK
@@ -258,6 +265,10 @@ def reconcile(account: Account, holdings: list[dict], securities: dict, cash_bal
         if asset.price_source == PriceSource.MANUAL and not is_cash and price:
             asset.manual_price = price
             asset.save(update_fields=["manual_price"])
+        elif not is_cash and price and asset.manual_price is None and asset.last_price is None:
+            # Live-priced asset not quoted yet (or unknown to Yahoo): use the institution's price until it is.
+            asset.last_price = price
+            asset.save(update_fields=["last_price"])
     if cash_balance is not None:
         cash = cash_asset(owner)
         targets.setdefault(cash.id, [cash, Decimal(0), None, Decimal(1)])[1] += cash_balance

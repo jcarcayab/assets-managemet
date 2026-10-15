@@ -199,7 +199,9 @@ class Transaction(models.Model):
     """
 
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="transactions")
-    asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name="transactions")
+    # RESTRICT (not PROTECT): an asset with history can't be deleted on its own, but deleting the user still
+    # cascades through accounts and assets together.
+    asset = models.ForeignKey(Asset, on_delete=models.RESTRICT, related_name="transactions")
     kind = models.CharField(max_length=10, choices=TransactionKind.choices, default=TransactionKind.BUY)
     date = models.DateField()
     quantity = models.DecimalField(**QTY, default=Decimal(0), validators=[MinValueValidator(Decimal(0))])

@@ -121,7 +121,9 @@ def test_sync_maps_transactions_and_reconciles(user, item):
     k401 = Account.objects.get(owner=user, name="Fidelity 401k Plan ····5678")
     assert k401.tax_treatment == TaxTreatment.TAX_DEFERRED and not k401.is_liquid
 
-    assert holding(user, "····1234", "VOO").quantity == 15
+    voo = holding(user, "····1234", "VOO")
+    assert voo.quantity == 15
+    assert voo.price == 500  # institution's price until Yahoo quotes it
     opening = Transaction.objects.get(account=broker, external_id__startswith="plaid-adj:open")
     assert opening.date == dt.date(2025, 2, 28)  # just before the first known trade
     assert (opening.quantity, opening.price) == (10, 400)  # at the broker's average cost
@@ -148,6 +150,24 @@ def test_sync_is_idempotent_and_follows_the_broker(user, item):
 def test_existing_ticker_asset_is_reused(user, item, voo):
     sync_item(item, FakePlaid())
     assert Asset.objects.filter(owner=user, symbol="VOO").count() == 1
+    voo.refresh_from_db()
+    assert voo.last_price == 110  # an existing live price is not overwritten
+
+
+def test_derivatives_are_priced_by_the_institution(user):
+    from connections.sync import asset_for_security
+
+    option = {"security_id": "sec-opt", "ticker_symbol": "NFLX180201C00355", "type": "derivative", "name": "NFLX call",
+              "close_price": 1.5}
+    asset = asset_for_security(user, option)
+    assert (asset.price_source, asset.asset_class, asset.price) == ("manual", "other", 1.5)
+
+
+def test_deleting_the_user_removes_synced_data(user, item):
+    sync_item(item, FakePlaid())
+    user.delete()  # transactions reference assets; both go with the user
+    assert not Transaction.objects.exists()
+    assert not PlaidItem.objects.exists()
 
 
 def test_can_feed_an_existing_account_or_skip_one(api, user, item, broker, other_user):
