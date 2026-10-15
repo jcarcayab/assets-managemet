@@ -1,8 +1,11 @@
+import calendar
+import datetime as dt
 from decimal import Decimal
 
 from django.conf import settings
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.utils import timezone
 
 QTY = {"max_digits": 28, "decimal_places": 10}
 MONEY = {"max_digits": 18, "decimal_places": 2}
@@ -280,16 +283,46 @@ class AllocationTarget(models.Model):
         constraints = [models.UniqueConstraint(fields=["account", "asset"], name="uniq_target_per_position")]
 
 
+class GrantType(models.TextChoices):
+    NSO = "nso", "Opciones NSO"
+    ISO = "iso", "Opciones ISO"
+    SHARES = "shares", "Acciones (ya compradas)"
+
+
+def add_months(d: dt.date, months: int) -> dt.date:
+    month = d.month - 1 + months
+    year, month = d.year + month // 12, month % 12 + 1
+    return dt.date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
+
+
 class EquityGrant(models.Model):
-    """Private company stock options. Unexercised options are valued at intrinsic value (FMV − strike)."""
+    """Private company equity.
+
+    Options are valued at intrinsic value (FMV − strike) × vested options until exercised; exercised options and
+    shares at FMV. Only the vested part counts, and an optional liquidity discount reflects that private shares
+    can't be sold at FMV today.
+    """
 
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="equity_grants")
     company = models.CharField(max_length=100)
+    grant_type = models.CharField(max_length=10, choices=GrantType.choices, default=GrantType.NSO)
     quantity = models.DecimalField(**QTY)
-    strike = models.DecimalField(**QTY)
-    fmv = models.DecimalField(**QTY, help_text="Valor justo de mercado por acción (manual).")
+    strike = models.DecimalField(**QTY, help_text="Strike de la opción, o precio pagado por acción.")
+    fmv = models.DecimalField(**QTY, help_text="Valor justo de mercado por acción (manual, p.ej. último 409A).")
     exercised = models.BooleanField(default=False)
     grant_date = models.DateField(null=True, blank=True)
+    vesting_start = models.DateField(null=True, blank=True, help_text="Vacío = todo adquirido (vested).")
+    vesting_months = models.PositiveSmallIntegerField(default=48)
+    cliff_months = models.PositiveSmallIntegerField(default=12)
+    expiration_date = models.DateField(null=True, blank=True, help_text="Vencimiento de las opciones (típico: 10 años).")
+    post_termination_days = models.PositiveSmallIntegerField(
+        default=90, help_text="Días para ejercer si dejas la empresa."
+    )
+    liquidity_discount_pct = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal(0),
+        validators=[MinValueValidator(Decimal(0)), MaxValueValidator(Decimal(100))],
+        help_text="Descuento sobre el FMV por no poder vender (0–100).",
+    )
     sector = models.CharField(
         max_length=60, blank=True, help_text="Sector de la empresa, para medir concentración con otros activos."
     )
@@ -302,13 +335,52 @@ class EquityGrant(models.Model):
         return f"{self.company} ({self.quantity})"
 
     @property
+    def is_option(self) -> bool:
+        return self.grant_type != GrantType.SHARES and not self.exercised
+
+    def vested_quantity(self, on: dt.date | None = None) -> Decimal:
+        if self.vesting_start is None or self.grant_type == GrantType.SHARES or self.exercised:
+            return self.quantity
+        on = on or timezone.localdate()
+        months = (on.year - self.vesting_start.year) * 12 + on.month - self.vesting_start.month
+        if on.day < self.vesting_start.day:
+            months -= 1
+        if months < self.cliff_months:
+            return Decimal(0)
+        if not self.vesting_months or months >= self.vesting_months:
+            return self.quantity
+        return (Decimal(self.quantity) * months / self.vesting_months).quantize(Decimal("0.0001"))
+
+    def next_vest_date(self, on: dt.date | None = None) -> dt.date | None:
+        if self.vesting_start is None or self.vested_quantity(on) >= self.quantity:
+            return None
+        on = on or timezone.localdate()
+        months = max(self.cliff_months, 1)
+        while add_months(self.vesting_start, months) <= on:
+            months += 1
+        return add_months(self.vesting_start, months)
+
+    @property
+    def fully_vested_date(self) -> dt.date | None:
+        return add_months(self.vesting_start, self.vesting_months) if self.vesting_start else None
+
+    @property
+    def per_share_value(self) -> Decimal:
+        """Value per vested unit, after the liquidity discount."""
+        fmv = self.fmv * (1 - self.liquidity_discount_pct / 100)
+        return max(fmv - self.strike, Decimal(0)) if self.is_option else fmv
+
+    @property
     def cost_basis(self) -> Decimal:
-        return self.quantity * self.strike if self.exercised else Decimal(0)
+        return Decimal(0) if self.is_option else self.vested_quantity() * self.strike
 
     @property
     def market_value(self) -> Decimal:
-        per_share = self.fmv if self.exercised else max(self.fmv - self.strike, Decimal(0))
-        return self.quantity * per_share
+        return self.vested_quantity() * self.per_share_value
+
+    @property
+    def exercise_cost(self) -> Decimal:
+        return self.vested_quantity() * self.strike if self.is_option else Decimal(0)
 
 
 class Snapshot(models.Model):
@@ -347,7 +419,14 @@ class UserSettings(models.Model):
         max_digits=6, decimal_places=2, default=Decimal(22), help_text="Tasa esperada al retirar de 401k / IRA tradicional."
     )
     ordinary_income_tax_pct = models.DecimalField(
-        max_digits=6, decimal_places=2, default=Decimal(24), help_text="Sobre el spread de opciones de equity privada."
+        max_digits=6, decimal_places=2, default=Decimal(24),
+        help_text="Ganancias de corto plazo (<1 año) y spread de opciones NSO.",
+    )
+    target_allocation = models.JSONField(
+        default=dict, blank=True, help_text="Asignación objetivo del hogar por categoría de exposición, en %."
+    )
+    rebalance_threshold_pct = models.DecimalField(
+        max_digits=6, decimal_places=2, default=Decimal(5), help_text="Desviación (puntos %) que dispara rebalanceo."
     )
 
     @classmethod

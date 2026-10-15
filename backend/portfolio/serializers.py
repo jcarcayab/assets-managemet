@@ -16,6 +16,30 @@ from portfolio.models import (
 )
 
 
+def clean_category_weights(value):
+    """{category: pct} with known categories, non-negative, summing to 100 (or empty)."""
+    if not value:
+        return {}
+    if not isinstance(value, dict):
+        raise serializers.ValidationError("Debe ser un objeto {categoría: %}.")
+    valid = dict(ExposureCategory.choices)
+    cleaned = {}
+    for key, pct in value.items():
+        if key not in valid:
+            raise serializers.ValidationError(f"Categoría desconocida: {key}")
+        try:
+            pct = float(pct or 0)
+        except (TypeError, ValueError) as exc:
+            raise serializers.ValidationError(f"{key}: debe ser un número.") from exc
+        if pct < 0:
+            raise serializers.ValidationError(f"{key}: no puede ser negativo.")
+        if pct:
+            cleaned[key] = pct
+    if cleaned and abs(sum(cleaned.values()) - 100) > 0.5:
+        raise serializers.ValidationError(f"Los porcentajes deben sumar 100 (suman {sum(cleaned.values()):g}).")
+    return cleaned
+
+
 class OwnedQuerysetField(serializers.PrimaryKeyRelatedField):
     """FK field that only accepts objects owned by the requesting user."""
 
@@ -51,26 +75,7 @@ class AssetSerializer(serializers.ModelSerializer):
         return value.strip().upper()
 
     def validate_exposures(self, value):
-        if not value:
-            return {}
-        if not isinstance(value, dict):
-            raise serializers.ValidationError("Debe ser un objeto {categoría: %}.")
-        valid = dict(ExposureCategory.choices)
-        cleaned = {}
-        for key, pct in value.items():
-            if key not in valid:
-                raise serializers.ValidationError(f"Categoría desconocida: {key}")
-            try:
-                pct = float(pct or 0)
-            except (TypeError, ValueError) as exc:
-                raise serializers.ValidationError(f"{key}: debe ser un número.") from exc
-            if pct < 0:
-                raise serializers.ValidationError(f"{key}: no puede ser negativo.")
-            if pct:
-                cleaned[key] = pct
-        if cleaned and abs(sum(cleaned.values()) - 100) > 0.5:
-            raise serializers.ValidationError(f"Los porcentajes deben sumar 100 (suman {sum(cleaned.values()):g}).")
-        return cleaned
+        return clean_category_weights(value)
 
 
 class TransactionSerializer(serializers.ModelSerializer):
@@ -155,15 +160,24 @@ class AllocationTargetSerializer(serializers.ModelSerializer):
 
 class EquityGrantSerializer(serializers.ModelSerializer):
     account = OwnedQuerysetField(queryset=Account.objects.all())
+    grant_type_label = serializers.CharField(source="get_grant_type_display", read_only=True)
     cost_basis = serializers.DecimalField(max_digits=28, decimal_places=10, read_only=True)
     market_value = serializers.DecimalField(max_digits=28, decimal_places=10, read_only=True)
 
     class Meta:
         model = EquityGrant
         fields = [
-            "id", "account", "company", "quantity", "strike", "fmv", "exercised", "grant_date", "sector", "notes",
-            "cost_basis", "market_value",
+            "id", "account", "company", "grant_type", "grant_type_label", "quantity", "strike", "fmv", "exercised",
+            "grant_date", "vesting_start", "vesting_months", "cliff_months", "expiration_date",
+            "post_termination_days", "liquidity_discount_pct", "sector", "notes", "cost_basis", "market_value",
         ]
+
+    def validate(self, attrs):
+        cliff = attrs.get("cliff_months", getattr(self.instance, "cliff_months", 0))
+        months = attrs.get("vesting_months", getattr(self.instance, "vesting_months", 0))
+        if cliff > months:
+            raise serializers.ValidationError({"cliff_months": "El cliff no puede ser mayor que el vesting total."})
+        return attrs
 
 
 class SnapshotSerializer(serializers.ModelSerializer):
@@ -176,6 +190,16 @@ class UserSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserSettings
         exclude = ["id", "owner"]
+
+    def validate_target_allocation(self, value):
+        return clean_category_weights(value)
+
+    def validate_benchmark(self, value):
+        from portfolio.services.history import BENCHMARKS
+
+        if value not in BENCHMARKS:
+            raise serializers.ValidationError("Benchmark no soportado.")
+        return value
 
 
 class PositionSerializer(serializers.Serializer):

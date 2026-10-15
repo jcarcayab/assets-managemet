@@ -14,6 +14,7 @@ from portfolio.models import (
     AssetClass,
     CashFlow,
     EquityGrant,
+    GrantType,
     PriceSource,
     TaxTreatment,
     Transaction,
@@ -28,6 +29,35 @@ DUST = Decimal("1e-8")
 
 def pct(part: Decimal, whole: Decimal) -> Decimal | None:
     return (part / whole * HUNDRED) if whole else None
+
+
+LONG_TERM_DAYS = 365
+
+
+@dataclass
+class Lot:
+    """A tax lot: units acquired on one date at one unit cost (FIFO, the US broker default)."""
+
+    date: dt.date
+    quantity: Decimal
+    unit_cost: Decimal
+
+    def is_long_term(self, on: dt.date) -> bool:
+        return (on - self.date).days > LONG_TERM_DAYS
+
+
+def take_fifo(lots: list[Lot], quantity: Decimal) -> list[Lot]:
+    """Remove `quantity` units from the oldest lots; return the removed pieces."""
+    taken, remaining = [], quantity
+    while remaining > 0 and lots:
+        lot = lots[0]
+        used = min(lot.quantity, remaining)
+        taken.append(Lot(lot.date, used, lot.unit_cost))
+        lot.quantity -= used
+        remaining -= used
+        if lot.quantity <= DUST:
+            lots.pop(0)
+    return taken
 
 
 @dataclass
@@ -47,6 +77,7 @@ class Position:
     underlying: str = ""
     sector: str = ""
     exposures: dict = field(default_factory=dict)
+    lots: list[Lot] = field(default_factory=list)
     # filled by finalize()/_apply_account_context()
     market_value: Decimal = ZERO
     unrealized: Decimal = ZERO
@@ -120,20 +151,25 @@ class Ledger:
         pos = self.position(tx.account, tx.asset)
         kind = tx.kind
         if kind == TransactionKind.BUY:
+            cost = tx.quantity * tx.price + tx.fees
             pos.quantity += tx.quantity
-            pos.cost_basis += tx.quantity * tx.price + tx.fees
+            pos.cost_basis += cost
+            if tx.quantity:
+                pos.lots.append(Lot(tx.date, tx.quantity, cost / tx.quantity))
         elif kind == TransactionKind.SELL:
-            # Remove cost at the running average; the difference is realized P/L.
+            # Position cost uses the running average; tax lots are consumed FIFO.
             sold = min(tx.quantity, pos.quantity)
             avg = pos.avg_cost
             pos.cost_basis -= avg * sold
             pos.quantity -= sold
             pos.realized += sold * tx.price - tx.fees - avg * sold
+            take_fifo(pos.lots, sold)
         elif kind == TransactionKind.STAKING:
             value = tx.quantity * tx.price
             pos.quantity += tx.quantity
             pos.cost_basis += value  # US tax basis = fair value at receipt
             pos.income += value
+            pos.lots.append(Lot(tx.date, tx.quantity, tx.price))
         elif kind in (TransactionKind.DIVIDEND, TransactionKind.INTEREST):
             pos.income += tx.amount
             cash = self.cash(tx.account)
@@ -147,6 +183,9 @@ class Ledger:
         elif kind == TransactionKind.SPLIT:
             if tx.quantity:
                 pos.quantity *= tx.quantity
+                for lot in pos.lots:
+                    lot.quantity *= tx.quantity
+                    lot.unit_cost /= tx.quantity
         elif kind == TransactionKind.TRANSFER and tx.to_account_id:
             moved = min(tx.quantity, pos.quantity)
             moved_cost = pos.avg_cost * moved
@@ -155,9 +194,13 @@ class Ledger:
             dest = self.position(tx.to_account, tx.asset)
             dest.quantity += moved
             dest.cost_basis += moved_cost
+            # Lots keep their original purchase dates (holding period carries over).
+            dest.lots.extend(take_fifo(pos.lots, moved))
+            dest.lots.sort(key=lambda lot: lot.date)
         if 0 <= pos.quantity < DUST and pos.asset_class != AssetClass.CASH:
             pos.quantity = ZERO
             pos.cost_basis = ZERO
+            pos.lots.clear()
 
 
 def ledger_transactions(user):
@@ -182,20 +225,31 @@ def compute_positions(user, include_closed: bool = False) -> list[Position]:
     positions = [p for p in ledger.positions.values() if include_closed or p.quantity != 0]
 
     for grant in EquityGrant.objects.filter(account__owner=user, account__archived=False).select_related("account"):
+        vested = grant.vested_quantity()
+        name = grant.get_grant_type_display() if grant.grant_type == GrantType.SHARES else (
+            f"Opciones {grant.grant_type.upper()}" + (" ejercidas" if grant.exercised else " sin ejercer")
+        )
         positions.append(
             Position(
                 account=grant.account,
                 asset=None,
                 symbol=grant.company,
-                name=f"Opciones {grant.company}" + ("" if grant.exercised else " (sin ejercer)"),
+                name=name,
                 asset_class=AssetClass.PRIVATE_EQUITY,
-                quantity=grant.quantity,
+                quantity=vested,
                 cost_basis=grant.cost_basis,
-                price=grant.market_value / grant.quantity if grant.quantity else ZERO,
+                price=grant.per_share_value,
                 underlying=grant.company,
                 sector=grant.sector,
                 exposures={"private_equity": HUNDRED},
-                extra={"equity_grant_id": grant.id, "strike": grant.strike, "fmv": grant.fmv},
+                extra={
+                    "equity_grant_id": grant.id,
+                    "grant_type": grant.grant_type,
+                    "is_option": grant.is_option,
+                    "strike": grant.strike,
+                    "fmv": grant.fmv,
+                    "unvested": grant.quantity - vested,
+                },
             )
         )
 
@@ -231,17 +285,36 @@ def _apply_trade_levels(user, positions: list[Position]) -> None:
         p.extra["sl_price"] = avg * (1 + s.stop_loss_pct / HUNDRED)
 
 
-def estimated_tax(p: Position, s: UserSettings) -> Decimal:
-    """Tax owed if this position were turned into spendable cash today (rough, flat-rate estimate)."""
+def lot_gains(p: Position, on: dt.date) -> tuple[Decimal, Decimal]:
+    """(short-term, long-term) unrealized gain of a position's tax lots at its current price."""
+    short = long = ZERO
+    for lot in p.lots:
+        gain = lot.quantity * (p.price - lot.unit_cost)
+        if lot.is_long_term(on):
+            long += gain
+        else:
+            short += gain
+    return short, long
+
+
+def estimated_tax(p: Position, s: UserSettings, on: dt.date | None = None) -> Decimal:
+    """Tax owed if this position were turned into spendable cash today (rough, flat-rate estimate).
+
+    Taxable accounts: FIFO lots held over a year pay the capital-gains rate, newer lots the ordinary rate.
+    Tax-deferred accounts: the whole balance is taxed on withdrawal. Private options: NSO spread as ordinary
+    income, ISO spread at capital-gains rates (assuming a qualifying disposition).
+    """
     if p.asset_class == AssetClass.DEBT:
         return ZERO
-    if p.asset is None:  # private equity options: spread taxed as ordinary income (NSO-style)
-        return max(p.unrealized, ZERO) * s.ordinary_income_tax_pct / HUNDRED
+    if p.asset is None:
+        rate = s.ordinary_income_tax_pct if p.extra.get("grant_type") == GrantType.NSO and p.extra.get("is_option") else s.capital_gains_tax_pct
+        return max(p.unrealized, ZERO) * rate / HUNDRED
     treatment = p.account.tax_treatment
     if treatment == TaxTreatment.TAX_DEFERRED:
         return max(p.market_value, ZERO) * s.retirement_tax_pct / HUNDRED
-    if treatment == TaxTreatment.TAXABLE:
-        return max(p.unrealized, ZERO) * s.capital_gains_tax_pct / HUNDRED
+    if treatment == TaxTreatment.TAXABLE and p.asset_class != AssetClass.CASH:
+        short, long = lot_gains(p, on or timezone.localdate())
+        return (max(short, ZERO) * s.ordinary_income_tax_pct + max(long, ZERO) * s.capital_gains_tax_pct) / HUNDRED
     return ZERO
 
 
