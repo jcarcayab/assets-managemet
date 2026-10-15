@@ -16,3 +16,7 @@ frontend/dist/
 
 .idea/
 .DS_Store
+
+# trading-swing deployment data (SQLite DB on the server)
+deploy/trading-swing/data/
+deploy/trading-swing/patrimonio-root-ca.crt
