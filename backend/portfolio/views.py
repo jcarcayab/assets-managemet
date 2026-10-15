@@ -17,6 +17,7 @@ from portfolio.models import (
     CashFlowKind,
     EquityGrant,
     ExposureCategory,
+    GrantType,
     PriceSource,
     Snapshot,
     TaxTreatment,
@@ -35,7 +36,11 @@ from portfolio.serializers import (
     TransactionSerializer,
     UserSettingsSerializer,
 )
+from portfolio.services.allocation import compute_allocation
+from portfolio.services.equity import compute_equity
 from portfolio.services.exposure import compute_exposure
+from portfolio.services.risk import compute_risk
+from portfolio.services.taxes import compute_tax_lots
 from portfolio.services.history import BENCHMARKS, update_history
 from portfolio.services.performance import compute_income, compute_performance
 from portfolio.services.positions import compute_positions, compute_summary
@@ -202,6 +207,26 @@ def exposure_view(request):
     return Response(compute_exposure(request.user))
 
 
+@api_view(["GET"])
+def tax_lots_view(request):
+    return Response(compute_tax_lots(request.user))
+
+
+@api_view(["GET"])
+def allocation_view(request):
+    return Response(compute_allocation(request.user))
+
+
+@api_view(["GET"])
+def risk_view(request):
+    return Response(compute_risk(request.user, request.query_params.get("custom")))
+
+
+@api_view(["GET"])
+def equity_summary_view(request):
+    return Response(compute_equity(request.user))
+
+
 @api_view(["GET", "PATCH"])
 def settings_view(request):
     obj = UserSettings.for_user(request.user)
@@ -229,6 +254,7 @@ def choices_view(request):
             "cash_flow_kinds": as_list(CashFlowKind),
             "tax_treatments": as_list(TaxTreatment),
             "exposure_categories": as_list(ExposureCategory),
+            "grant_types": as_list(GrantType),
             "benchmarks": [{"value": k, "label": v} for k, v in BENCHMARKS.items()],
         }
     )

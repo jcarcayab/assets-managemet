@@ -51,6 +51,7 @@ export type Choices = {
   cash_flow_kinds: Choice[]
   tax_treatments: Choice[]
   exposure_categories: Choice[]
+  grant_types: Choice[]
   benchmarks: Choice[]
 }
 
@@ -121,15 +122,145 @@ export type EquityGrant = {
   id: number
   account: number
   company: string
+  grant_type: 'nso' | 'iso' | 'shares'
+  grant_type_label: string
   quantity: number
   strike: number
   fmv: number
   exercised: boolean
   grant_date: string | null
+  vesting_start: string | null
+  vesting_months: number
+  cliff_months: number
+  expiration_date: string | null
+  post_termination_days: number
+  liquidity_discount_pct: number
   sector: string
   notes: string
   cost_basis: number
   market_value: number
+}
+
+export type EquitySummary = {
+  grants: {
+    id: number
+    company: string
+    account: string
+    grant_type: string
+    grant_type_label: string
+    is_option: boolean
+    quantity: number
+    vested: number
+    unvested: number
+    vested_pct: number | null
+    next_vest_date: string | null
+    fully_vested_date: string | null
+    strike: number
+    fmv: number
+    liquidity_discount_pct: number
+    value: number
+    unvested_value: number
+    value_without_discount: number
+    exercise_cost: number
+    spread: number
+    exercise_tax: number
+    amt_preference: number
+    cash_to_exercise: number
+    expiration_date: string | null
+    days_to_expiration: number | null
+    post_termination_days: number
+  }[]
+  alerts: { level: 'warning' | 'critical'; company: string; message: string }[]
+  totals: { value: number; unvested_value: number; exercise_cost: number; exercise_tax: number; cash_to_exercise: number }
+}
+
+export type TaxLots = {
+  rates: { short: number; long: number }
+  short_gain: number
+  long_gain: number
+  estimated_tax: number
+  positions: {
+    symbol: string
+    name: string
+    account: string
+    price: number
+    gain: number
+    lots: {
+      date: string
+      quantity: number
+      unit_cost: number
+      cost: number
+      value: number
+      gain: number
+      term: 'short' | 'long'
+      days_to_long_term: number | null
+    }[]
+  }[]
+  harvest: {
+    symbol: string
+    account: string
+    date: string
+    loss: number
+    term: 'short' | 'long'
+    tax_saving: number
+    wash_sale_rule: boolean
+    wash_sale_risk: boolean
+  }[]
+  harvest_total_loss: number
+  harvest_total_saving: number
+  soon_long_term: { symbol: string; account: string; date: string; gain: number; days_to_long_term: number; saving_if_wait: number }[]
+}
+
+export type Allocation = {
+  total: number
+  threshold: number
+  has_target: boolean
+  rows: {
+    key: string
+    label: string
+    value: number
+    weight: number
+    target_pct: number | null
+    target_value: number | null
+    diff: number | null
+    drift: number | null
+    action: 'buy' | 'sell' | 'locked' | null
+    tradeable: boolean
+  }[]
+  sells: {
+    category: string
+    label: string
+    amount: number
+    items: { symbol: string; account: string; tax_treatment: string; sell: number; estimated_tax: number }[]
+  }[]
+  cash_available: { account: string; value: number; tax_treatment: string }[]
+}
+
+export type Scenario = {
+  key: string
+  label: string
+  description: string
+  change: number
+  change_pct: number | null
+  net_worth_after: number
+  liquid_change: number
+  worst: { label: string; change: number }[]
+}
+
+export type Risk = {
+  portfolio: {
+    window_days: number
+    volatility: number | null
+    max_drawdown: number | null
+    current_drawdown: number | null
+    recent_contribution_share?: number
+  }
+  holdings: {
+    assets: { symbol: string; value: number; volatility: number | null }[]
+    symbols: string[]
+    matrix: (number | null)[][]
+  }
+  scenarios: Scenario[]
 }
 
 export type Target = { id: number; account: number; asset: number; target_pct: number }
@@ -258,6 +389,8 @@ export type Settings = {
   capital_gains_tax_pct: number
   retirement_tax_pct: number
   ordinary_income_tax_pct: number
+  target_allocation: Record<string, number>
+  rebalance_threshold_pct: number
 }
 
 export type User = { id: number; username: string }

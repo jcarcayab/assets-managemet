@@ -72,5 +72,15 @@ Debt assets (class `debt`) are stored as positive balances and subtract from net
   equity and debt are excluded. `refresh_prices` also fetches missing history.
 - **Exposure** (`services/exposure.py`): look-through by category, grouping by underlying (VOO + FXAIX →
   S&P 500) and by sector (e.g. crypto assets + crypto-company options), with alerts above the limit.
-- **After-tax net worth** (`services/positions.py`): flat-rate estimate — capital gains on taxable accounts,
-  the full balance of tax-deferred accounts, and the option spread as ordinary income.
+- **After-tax net worth** (`services/positions.py`): flat-rate estimate — FIFO tax lots in taxable accounts
+  (short-term at the ordinary rate, long-term at the capital-gains rate), the full balance of tax-deferred
+  accounts, NSO spread as ordinary income and ISO spread at capital-gains rates.
+- **Tax lots** (`services/taxes.py`): short/long-term gains, tax-loss-harvesting candidates with wash-sale
+  flags (securities only), and gains about to turn long-term.
+- **Household allocation** (`services/allocation.py`): target mix by exposure category, drift vs. a threshold,
+  and a sell plan that trims tax-advantaged accounts first, then the lowest embedded tax per dollar.
+- **Risk** (`services/risk.py`): 12-month volatility and drawdown, per-holding volatility, return
+  correlations, and stress scenarios (crypto winter, recession, 2008-style, inflation) plus a custom one;
+  sector shocks (e.g. crypto-company equity) apply when more severe than the category shock.
+- **Private equity** (`services/equity.py`): cliff + monthly vesting, liquidity discount, exercise cost,
+  NSO tax / ISO AMT preference, and expiration alerts. Only vested equity counts toward net worth.

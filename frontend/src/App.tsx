@@ -7,6 +7,8 @@ import Dashboard from './pages/Dashboard'
 import Holdings from './pages/Holdings'
 import Performance from './pages/Performance'
 import Exposure from './pages/Exposure'
+import Risk from './pages/Risk'
+import Taxes from './pages/Taxes'
 import Transactions from './pages/Transactions'
 import Accounts from './pages/Accounts'
 import Assets from './pages/Assets'
@@ -20,6 +22,8 @@ const NAV = [
   { to: '/posiciones', label: 'Posiciones' },
   { to: '/rendimiento', label: 'Rendimiento' },
   { to: '/exposicion', label: 'Exposición' },
+  { to: '/riesgo', label: 'Riesgo' },
+  { to: '/impuestos', label: 'Impuestos' },
   { to: '/movimientos', label: 'Movimientos' },
   { to: '/cuentas', label: 'Cuentas' },
   { to: '/activos', label: 'Activos' },
@@ -64,6 +68,8 @@ export default function App() {
           <Route path="/posiciones" element={<Holdings />} />
           <Route path="/rendimiento" element={<Performance />} />
           <Route path="/exposicion" element={<Exposure />} />
+          <Route path="/riesgo" element={<Risk />} />
+          <Route path="/impuestos" element={<Taxes />} />
           <Route path="/movimientos" element={<Transactions />} />
           <Route path="/cuentas" element={<Accounts />} />
           <Route path="/activos" element={<Assets />} />

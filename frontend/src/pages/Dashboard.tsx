@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom'
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
+import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
+import type { EquitySummary } from '../api'
 import { useExposure, useRefreshPrices, useSummary, useWrite } from '../hooks'
 import { dateTime, money, pct, signed, tone } from '../format'
 import { PALETTE } from '../palette'
@@ -18,6 +20,7 @@ function Kpi({ label, value, sub, subTone }: { label: string; value: string; sub
 export default function Dashboard() {
   const summary = useSummary()
   const exposure = useExposure()
+  const equity = useQuery({ queryKey: ['equity-summary'], queryFn: () => api<EquitySummary>('/equity/') })
   const refresh = useRefreshPrices()
   const snapshot = useWrite(() => api('/snapshots/', { method: 'POST', body: {} }))
 
@@ -60,6 +63,12 @@ export default function Dashboard() {
         {refresh.data?.failed.length ? ` · sin precio: ${refresh.data.failed.join(', ')}` : ''}
         {snapshot.isSuccess && ' · Foto guardada en Historial'}
       </p>
+
+      {equity.data?.alerts.map((a, i) => (
+        <Link key={i} to="/equity" className="card warn link-card">
+          <strong>{a.company}:</strong> {a.message} →
+        </Link>
+      ))}
 
       {exposure.data && exposure.data.alerts.length > 0 && (
         <Link to="/exposicion" className="card warn link-card">
