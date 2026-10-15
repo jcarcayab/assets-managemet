@@ -1,9 +1,17 @@
 import os
 
-os.environ.setdefault("DEBUG", "1")
-os.environ.setdefault("DATABASE_URL", "sqlite://:memory:")
+# Forced, not defaulted: load_dotenv never overrides variables that are already set, so this keeps a
+# developer's .env (DATABASE_URL, DEBUG=0, …) out of the test run.
+os.environ["DEBUG"] = "1"
+os.environ["DATABASE_URL"] = "sqlite://:memory:"
 
 from config.settings import *  # noqa: E402,F403
+
+# Settings that settings.py reads from the environment/.env and that tests turn on per test when needed.
+MFA_REQUIRED = False
+FIELD_ENCRYPTION_KEY = ""
+PLAID_CLIENT_ID = PLAID_SECRET = PLAID_REDIRECT_URI = ""
+PLAID_ENV = "sandbox"
 
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 STORAGES = {**STORAGES, "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"}}  # noqa: F405
