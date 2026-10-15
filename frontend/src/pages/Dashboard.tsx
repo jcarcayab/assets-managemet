@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { api } from '../api'
-import { useRefreshPrices, useSummary, useWrite } from '../hooks'
+import { useExposure, useRefreshPrices, useSummary, useWrite } from '../hooks'
 import { dateTime, money, pct, signed, tone } from '../format'
 import { PALETTE } from '../palette'
 
@@ -17,6 +17,7 @@ function Kpi({ label, value, sub, subTone }: { label: string; value: string; sub
 
 export default function Dashboard() {
   const summary = useSummary()
+  const exposure = useExposure()
   const refresh = useRefreshPrices()
   const snapshot = useWrite(() => api('/snapshots/', { method: 'POST', body: {} }))
 
@@ -60,9 +61,24 @@ export default function Dashboard() {
         {snapshot.isSuccess && ' · Foto guardada en Historial'}
       </p>
 
+      {exposure.data && exposure.data.alerts.length > 0 && (
+        <Link to="/exposicion" className="card warn link-card">
+          <strong>Concentración:</strong>{' '}
+          {exposure.data.alerts
+            .slice(0, 3)
+            .map((a) => `${a.label} ${pct(a.weight, 0)}`)
+            .join(' · ')}{' '}
+          supera tu límite de {pct(Number(exposure.data.limit), 0)} →
+        </Link>
+      )}
+
       <div className="kpis">
-        <Kpi label="Patrimonio total" value={money(s.net_worth, true)} />
-        <Kpi label="Sin equity privada" value={money(s.net_worth_ex_private, true)} />
+        <Kpi label="Patrimonio total" value={money(s.net_worth, true)} sub={`sin equity privada: ${money(s.net_worth_ex_private, true)}`} />
+        <Kpi
+          label="Después de impuestos"
+          value={money(s.after_tax_net_worth, true)}
+          sub={`impuestos estimados ${money(s.estimated_taxes, true)}`}
+        />
         <Kpi
           label="Líquido (accesible)"
           value={money(s.liquid, true)}
@@ -73,6 +89,11 @@ export default function Dashboard() {
           value={signed(s.unrealized)}
           sub={`${pct(s.unrealized_pct)} sobre costo ${money(s.cost, true)}`}
           subTone={tone(s.unrealized)}
+        />
+        <Kpi
+          label="Ingresos 12 meses"
+          value={money(s.income_12m.total, true)}
+          sub={`div. ${money(s.income_12m.dividend, true)} · int. ${money(s.income_12m.interest, true)} · staking ${money(s.income_12m.staking, true)}`}
         />
       </div>
 

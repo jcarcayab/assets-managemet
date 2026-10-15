@@ -1,8 +1,11 @@
 """Derive current holdings from the transaction ledger (average-cost method) and aggregate them."""
 
+import datetime as dt
 from collections import defaultdict
 from dataclasses import dataclass, field
 from decimal import Decimal
+
+from django.utils import timezone
 
 from portfolio.models import (
     Account,
@@ -11,6 +14,8 @@ from portfolio.models import (
     AssetClass,
     CashFlow,
     EquityGrant,
+    PriceSource,
+    TaxTreatment,
     Transaction,
     TransactionKind,
     UserSettings,
@@ -35,8 +40,13 @@ class Position:
     quantity: Decimal = ZERO
     cost_basis: Decimal = ZERO
     realized: Decimal = ZERO
+    income: Decimal = ZERO
+    fees_paid: Decimal = ZERO
     price: Decimal = ZERO
     target_pct: Decimal | None = None
+    underlying: str = ""
+    sector: str = ""
+    exposures: dict = field(default_factory=dict)
     # filled by finalize()/_apply_account_context()
     market_value: Decimal = ZERO
     unrealized: Decimal = ZERO
@@ -60,50 +70,116 @@ class Position:
         self.unrealized = self.market_value - self.cost_basis
 
 
-def apply_trade(pos: Position, tx: Transaction) -> None:
-    if tx.kind == TransactionKind.BUY:
-        pos.quantity += tx.quantity
-        pos.cost_basis += tx.quantity * tx.price + tx.fees
-        return
-    # SELL: remove cost at the running average, book the difference as realized P/L.
-    sold = min(tx.quantity, pos.quantity)
-    avg = pos.avg_cost
-    pos.cost_basis -= avg * sold
-    pos.quantity -= sold
-    pos.realized += sold * tx.price - tx.fees - avg * sold
-    if pos.quantity < DUST:
-        pos.quantity = ZERO
-        pos.cost_basis = ZERO
+def cash_asset(user) -> Asset:
+    asset, _ = Asset.objects.get_or_create(
+        owner=user,
+        symbol="USD",
+        defaults={
+            "name": "Dólar",
+            "asset_class": AssetClass.CASH,
+            "price_source": PriceSource.MANUAL,
+            "manual_price": Decimal(1),
+        },
+    )
+    return asset
+
+
+class Ledger:
+    """Replays transactions in date order, keeping a Position per (account, asset)."""
+
+    def __init__(self, user, targets: dict | None = None):
+        self.user = user
+        self.targets = targets or {}
+        self.positions: dict[tuple[int, int], Position] = {}
+        self._cash: Asset | None = None
+
+    def position(self, account: Account, asset: Asset) -> Position:
+        key = (account.id, asset.id)
+        pos = self.positions.get(key)
+        if pos is None:
+            pos = self.positions[key] = Position(
+                account=account,
+                asset=asset,
+                symbol=asset.symbol,
+                name=asset.name,
+                asset_class=asset.asset_class,
+                price=asset.price,
+                target_pct=self.targets.get(key),
+                underlying=asset.underlying,
+                sector=asset.sector,
+                exposures=asset.exposure_breakdown(),
+            )
+        return pos
+
+    def cash(self, account: Account) -> Position:
+        if self._cash is None:
+            self._cash = cash_asset(self.user)
+        return self.position(account, self._cash)
+
+    def apply(self, tx: Transaction) -> None:
+        pos = self.position(tx.account, tx.asset)
+        kind = tx.kind
+        if kind == TransactionKind.BUY:
+            pos.quantity += tx.quantity
+            pos.cost_basis += tx.quantity * tx.price + tx.fees
+        elif kind == TransactionKind.SELL:
+            # Remove cost at the running average; the difference is realized P/L.
+            sold = min(tx.quantity, pos.quantity)
+            avg = pos.avg_cost
+            pos.cost_basis -= avg * sold
+            pos.quantity -= sold
+            pos.realized += sold * tx.price - tx.fees - avg * sold
+        elif kind == TransactionKind.STAKING:
+            value = tx.quantity * tx.price
+            pos.quantity += tx.quantity
+            pos.cost_basis += value  # US tax basis = fair value at receipt
+            pos.income += value
+        elif kind in (TransactionKind.DIVIDEND, TransactionKind.INTEREST):
+            pos.income += tx.amount
+            cash = self.cash(tx.account)
+            cash.quantity += tx.amount
+            cash.cost_basis += tx.amount
+        elif kind == TransactionKind.FEE:
+            pos.fees_paid += tx.amount
+            cash = self.cash(tx.account)
+            cash.quantity -= tx.amount
+            cash.cost_basis -= tx.amount
+        elif kind == TransactionKind.SPLIT:
+            if tx.quantity:
+                pos.quantity *= tx.quantity
+        elif kind == TransactionKind.TRANSFER and tx.to_account_id:
+            moved = min(tx.quantity, pos.quantity)
+            moved_cost = pos.avg_cost * moved
+            pos.quantity -= moved
+            pos.cost_basis -= moved_cost
+            dest = self.position(tx.to_account, tx.asset)
+            dest.quantity += moved
+            dest.cost_basis += moved_cost
+        if 0 <= pos.quantity < DUST and pos.asset_class != AssetClass.CASH:
+            pos.quantity = ZERO
+            pos.cost_basis = ZERO
+
+
+def ledger_transactions(user):
+    return (
+        Transaction.objects.filter(account__owner=user, account__archived=False)
+        .select_related("account", "asset", "to_account")
+        .order_by("date", "id")
+    )
 
 
 def compute_positions(user, include_closed: bool = False) -> list[Position]:
-    txs = (
-        Transaction.objects.filter(account__owner=user, account__archived=False)
-        .select_related("account", "asset")
-        .order_by("date", "id")
-    )
     targets = {
         (t.account_id, t.asset_id): t.target_pct
         for t in AllocationTarget.objects.filter(account__owner=user)
     }
+    ledger = Ledger(user, targets)
+    for tx in ledger_transactions(user):
+        if tx.to_account_id and tx.to_account.archived:
+            continue
+        ledger.apply(tx)
 
-    by_key: dict[tuple[int, int], Position] = {}
-    for tx in txs:
-        key = (tx.account_id, tx.asset_id)
-        pos = by_key.get(key)
-        if pos is None:
-            pos = by_key[key] = Position(
-                account=tx.account,
-                asset=tx.asset,
-                symbol=tx.asset.symbol,
-                name=tx.asset.name,
-                asset_class=tx.asset.asset_class,
-                price=tx.asset.price,
-                target_pct=targets.get(key),
-            )
-        apply_trade(pos, tx)
-
-    positions = [p for p in by_key.values() if include_closed or p.quantity > 0]
+    positions = [p for p in ledger.positions.values() if include_closed or p.quantity != 0]
 
     for grant in EquityGrant.objects.filter(account__owner=user, account__archived=False).select_related("account"):
         positions.append(
@@ -116,6 +192,9 @@ def compute_positions(user, include_closed: bool = False) -> list[Position]:
                 quantity=grant.quantity,
                 cost_basis=grant.cost_basis,
                 price=grant.market_value / grant.quantity if grant.quantity else ZERO,
+                underlying=grant.company,
+                sector=grant.sector,
+                exposures={"private_equity": HUNDRED},
                 extra={"equity_grant_id": grant.id, "strike": grant.strike, "fmv": grant.fmv},
             )
         )
@@ -152,6 +231,36 @@ def _apply_trade_levels(user, positions: list[Position]) -> None:
         p.extra["sl_price"] = avg * (1 + s.stop_loss_pct / HUNDRED)
 
 
+def estimated_tax(p: Position, s: UserSettings) -> Decimal:
+    """Tax owed if this position were turned into spendable cash today (rough, flat-rate estimate)."""
+    if p.asset_class == AssetClass.DEBT:
+        return ZERO
+    if p.asset is None:  # private equity options: spread taxed as ordinary income (NSO-style)
+        return max(p.unrealized, ZERO) * s.ordinary_income_tax_pct / HUNDRED
+    treatment = p.account.tax_treatment
+    if treatment == TaxTreatment.TAX_DEFERRED:
+        return max(p.market_value, ZERO) * s.retirement_tax_pct / HUNDRED
+    if treatment == TaxTreatment.TAXABLE:
+        return max(p.unrealized, ZERO) * s.capital_gains_tax_pct / HUNDRED
+    return ZERO
+
+
+def income_since(user, since: dt.date) -> dict:
+    out = {"dividend": ZERO, "interest": ZERO, "staking": ZERO, "fees": ZERO}
+    txs = Transaction.objects.filter(account__owner=user, account__archived=False, date__gte=since).filter(
+        kind__in=[TransactionKind.DIVIDEND, TransactionKind.INTEREST, TransactionKind.STAKING, TransactionKind.FEE]
+    )
+    for tx in txs:
+        if tx.kind == TransactionKind.STAKING:
+            out["staking"] += tx.quantity * tx.price
+        elif tx.kind == TransactionKind.FEE:
+            out["fees"] += tx.amount
+        else:
+            out[tx.kind] += tx.amount
+    out["total"] = out["dividend"] + out["interest"] + out["staking"]
+    return out
+
+
 def _group(positions, key_fn, label_fn):
     groups: dict = {}
     for p in positions:
@@ -163,6 +272,7 @@ def _group(positions, key_fn, label_fn):
 
 
 def compute_summary(user) -> dict:
+    s = UserSettings.for_user(user)
     positions = compute_positions(user)
     net_worth = sum((p.market_value for p in positions), ZERO)
     cost = sum((p.cost_basis for p in positions), ZERO)
@@ -183,10 +293,26 @@ def compute_summary(user) -> dict:
     # Accounts with no holdings still show up (e.g. an empty Roth IRA).
     for acc in accounts.values():
         g = by_account.setdefault(acc.id, {"key": acc.id, "label": acc.name, "cost": ZERO, "value": ZERO})
-        g.update(institution=acc.institution, account_type=acc.account_type, is_liquid=acc.is_liquid)
+        g.update(
+            institution=acc.institution, account_type=acc.account_type, is_liquid=acc.is_liquid,
+            tax_treatment=acc.tax_treatment,
+        )
 
     labels = dict(AssetClass.choices)
     by_class = _group(positions, lambda p: p.asset_class, lambda p: labels.get(p.asset_class, p.asset_class))
+
+    tax_labels = dict(TaxTreatment.choices)
+    by_tax: dict[str, dict] = {}
+    for p in positions:
+        key = "private_equity" if p.asset is None else p.account.tax_treatment
+        g = by_tax.setdefault(
+            key, {"key": key, "label": tax_labels.get(key, "Equity privada"), "value": ZERO, "tax": ZERO}
+        )
+        g["value"] += p.market_value
+        g["tax"] += estimated_tax(p, s)
+    taxes = sum((g["tax"] for g in by_tax.values()), ZERO)
+    for g in by_tax.values():
+        g["after_tax"] = g["value"] - g["tax"]
 
     crypto_accounts = {a.id for a in accounts.values() if a.account_type == "crypto"}
     crypto_deposits = sum(
@@ -203,14 +329,18 @@ def compute_summary(user) -> dict:
     return {
         "net_worth": net_worth,
         "net_worth_ex_private": net_worth - private,
+        "after_tax_net_worth": net_worth - taxes,
+        "estimated_taxes": taxes,
         "liquid": liquid,
         "illiquid": net_worth - liquid,
         "cost": cost,
         "unrealized": net_worth - cost,
         "unrealized_pct": pct(net_worth - cost, abs(cost)),
         "prices_as_of": min(live_prices_at) if live_prices_at else None,
+        "income_12m": income_since(user, timezone.localdate() - dt.timedelta(days=365)),
         "by_account": finish(by_account),
         "by_class": finish(by_class),
+        "by_tax_treatment": sorted(by_tax.values(), key=lambda r: -r["value"]),
         "crypto": {
             "deposits": crypto_deposits,
             "value": crypto_value,

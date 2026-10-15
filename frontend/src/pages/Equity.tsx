@@ -35,11 +35,15 @@ export default function Equity() {
         { name: 'strike', label: 'Strike (USD)', type: 'number', required: true },
         { name: 'fmv', label: 'FMV por acción (USD)', type: 'number', required: true },
         { name: 'grant_date', label: 'Fecha de grant', type: 'date', nullable: true },
+        { name: 'sector', label: 'Sector', help: 'Para medir concentración, ej. Crypto' },
         { name: 'exercised', label: 'Ejercidas', type: 'checkbox' },
         { name: 'notes', label: 'Notas (vesting, etc.)', type: 'textarea' },
       ]}
-      defaults={{ account: accountOptions[0]?.value ?? '', company: '', quantity: '', strike: '', fmv: '', grant_date: '', exercised: false, notes: '' }}
-      toForm={(r) => formOf(r, ['account', 'company', 'quantity', 'strike', 'fmv', 'grant_date', 'exercised', 'notes'])}
+      defaults={{
+        account: accountOptions[0]?.value ?? '', company: '', quantity: '', strike: '', fmv: '', grant_date: '', sector: '',
+        exercised: false, notes: '',
+      }}
+      toForm={(r) => formOf(r, ['account', 'company', 'quantity', 'strike', 'fmv', 'grant_date', 'sector', 'exercised', 'notes'])}
     />
   )
 }
