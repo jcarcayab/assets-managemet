@@ -1,4 +1,4 @@
-from django.db.models.deletion import ProtectedError
+from django.db.models.deletion import ProtectedError, RestrictedError
 from rest_framework import status, viewsets
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -77,7 +77,7 @@ class OwnedViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         try:
             return super().destroy(request, *args, **kwargs)
-        except ProtectedError:
+        except (ProtectedError, RestrictedError):
             return Response(
                 {"detail": "No se puede borrar: tiene transacciones asociadas."}, status=status.HTTP_409_CONFLICT
             )

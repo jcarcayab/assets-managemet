@@ -16,6 +16,7 @@ def spa_index(request):
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/auth/", include("security.urls")),
+    path("api/plaid/", include("connections.urls")),
     path("api/", include("portfolio.urls")),
     re_path(r"^(?!api/|admin/|static/).*$", spa_index),
 ]

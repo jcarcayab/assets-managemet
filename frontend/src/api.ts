@@ -492,6 +492,37 @@ export type Settings = {
   life_expectancy: number
 }
 
+export type PlaidStatus = { configured: boolean; env: string }
+export type PlaidAccount = {
+  id: number
+  name: string
+  official_name: string
+  mask: string
+  type: string
+  subtype: string
+  current_balance: number | null
+  account: number | null
+  account_name: string | null
+  enabled: boolean
+}
+export type PlaidItem = {
+  id: number
+  institution_name: string
+  created_at: string
+  last_synced_at: string | null
+  last_error: string
+  needs_reauth: boolean
+  accounts: PlaidAccount[]
+}
+export type SyncReport = {
+  accounts: number
+  transactions: number
+  cash_flows: number
+  adjustments: number
+  skipped: number
+  error: { code: string; message: string; needs_reauth: boolean } | null
+}
+
 export type User = { id: number; username: string; mfa_enabled: boolean }
 export type SessionInfo = { user: User | null; mfa_setup_required: boolean }
 export type LoginResult = SessionInfo | { mfa_required: true; mfa_token: string }

@@ -199,7 +199,9 @@ class Transaction(models.Model):
     """
 
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="transactions")
-    asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name="transactions")
+    # RESTRICT (not PROTECT): an asset with history can't be deleted on its own, but deleting the user still
+    # cascades through accounts and assets together.
+    asset = models.ForeignKey(Asset, on_delete=models.RESTRICT, related_name="transactions")
     kind = models.CharField(max_length=10, choices=TransactionKind.choices, default=TransactionKind.BUY)
     date = models.DateField()
     quantity = models.DecimalField(**QTY, default=Decimal(0), validators=[MinValueValidator(Decimal(0))])
@@ -252,6 +254,7 @@ class CashFlow(models.Model):
     date = models.DateField()
     amount = models.DecimalField(**MONEY, help_text="Positivo = entra a la cuenta, negativo = sale.")
     notes = models.CharField(max_length=200, blank=True)
+    external_id = models.CharField(max_length=100, blank=True, db_index=True, help_text="ID del origen (p.ej. Plaid).")
 
     class Meta:
         ordering = ["-date", "-id"]
