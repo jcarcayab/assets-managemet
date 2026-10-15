@@ -58,6 +58,25 @@ a daily snapshot. On a PaaS without compose, run the same image and schedule
   codes, delete their TOTP device in the admin (or `manage.py shell`).
 - Secrets in the database (TOTP seeds, Plaid tokens) are encrypted with `FIELD_ENCRYPTION_KEY`.
 
+## Bank connections (Plaid)
+
+`backend/connections/` links brokers, retirement accounts and bank accounts through Plaid Link
+(Conexiones page). Set `PLAID_CLIENT_ID`, `PLAID_SECRET` and `PLAID_ENV` (`sandbox` to try it with Plaid's
+test banks — user `user_good`, password `pass_good`).
+
+- The Plaid `access_token` is stored encrypted (`FIELD_ENCRYPTION_KEY`) and never sent to the browser.
+- Each Plaid account feeds one portfolio account: a new one by default, or one you choose; it can also be
+  switched off. Credit cards and loans are listed but not synced.
+- Sync (button, or `manage.py plaid_sync` daily from the scheduler) imports investment transactions
+  idempotently: buys, sells, dividends, interest, fees → ledger; deposits/withdrawals/contributions →
+  cash flows. Then each account is **reconciled** with the holdings the institution reports: units older
+  than Plaid's ~24 months of history become an opening balance at the broker's average cost (dated before
+  the first known trade), and anything still off — cash, splits, undetailed transfers — is fixed as of
+  today. Adjustments are rebuilt on every sync, never stacked.
+- Funds without a public ticker (401k collective trusts) are priced with the institution's price.
+- If the institution asks to log in again, the connection is flagged and "Reconectar" opens Link in
+  update mode.
+
 ## Domain model
 
 | Model | Purpose |

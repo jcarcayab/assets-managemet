@@ -11,7 +11,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Refreshes prices every hour and stores one net-worth snapshot per day (at 21:00 UTC).
+  # Refreshes prices every hour; once a day (21:00 UTC) syncs Plaid connections and stores a net-worth snapshot.
   scheduler:
     build: .
     env_file: .env
@@ -20,7 +20,7 @@ services:
     command: >
       sh -c 'sleep 60; while true; do
         python manage.py refresh_prices;
-        [ "$$(date -u +%H)" = "21" ] && python manage.py take_snapshot --no-refresh;
+        if [ "$$(date -u +%H)" = "21" ]; then python manage.py plaid_sync; python manage.py take_snapshot --no-refresh; fi;
         sleep 3600;
       done'
     depends_on:

@@ -252,6 +252,7 @@ class CashFlow(models.Model):
     date = models.DateField()
     amount = models.DecimalField(**MONEY, help_text="Positivo = entra a la cuenta, negativo = sale.")
     notes = models.CharField(max_length=200, blank=True)
+    external_id = models.CharField(max_length=100, blank=True, db_index=True, help_text="ID del origen (p.ej. Plaid).")
 
     class Meta:
         ordering = ["-date", "-id"]

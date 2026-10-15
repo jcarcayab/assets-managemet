@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "security",
     "portfolio",
+    "connections",
 ]
 
 MIDDLEWARE = [
@@ -114,6 +115,12 @@ MFA_REQUIRED = env_bool("MFA_REQUIRED", False)
 # Key for secrets stored encrypted in the DB (TOTP seeds, Plaid tokens). Falls back to SECRET_KEY; set it
 # explicitly in production so rotating SECRET_KEY doesn't make those secrets unreadable.
 FIELD_ENCRYPTION_KEY = os.environ.get("FIELD_ENCRYPTION_KEY", "")
+
+# Plaid (https://dashboard.plaid.com/developers/keys). "sandbox" uses Plaid's free test institutions.
+PLAID_CLIENT_ID = os.environ.get("PLAID_CLIENT_ID", "")
+PLAID_SECRET = os.environ.get("PLAID_SECRET", "")
+PLAID_ENV = os.environ.get("PLAID_ENV", "sandbox")
+PLAID_REDIRECT_URI = os.environ.get("PLAID_REDIRECT_URI", "")  # required by OAuth banks in production
 
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 14
 SESSION_COOKIE_SAMESITE = "Lax"

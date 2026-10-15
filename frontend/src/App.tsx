@@ -18,6 +18,7 @@ import Equity from './pages/Equity'
 import History from './pages/History'
 import Budget from './pages/Budget'
 import Debts from './pages/Debts'
+import Connections from './pages/Connections'
 import Projection from './pages/Projection'
 import SettingsPage from './pages/Settings'
 
@@ -35,6 +36,7 @@ const NAV = [
   { to: '/presupuesto', label: 'Presupuesto' },
   { to: '/deudas', label: 'Deudas' },
   { to: '/historial', label: 'Historial' },
+  { to: '/conexiones', label: 'Conexiones' },
   { to: '/proyeccion', label: 'Proyección' },
   { to: '/ajustes', label: 'Ajustes' },
 ]
@@ -105,6 +107,7 @@ export default function App() {
           <Route path="/presupuesto" element={<Budget />} />
           <Route path="/deudas" element={<Debts />} />
           <Route path="/historial" element={<History />} />
+          <Route path="/conexiones" element={<Connections />} />
           <Route path="/proyeccion" element={<Projection />} />
           <Route path="/ajustes" element={<SettingsPage user={session.data.user} />} />
           <Route path="*" element={<Navigate to="/" replace />} />

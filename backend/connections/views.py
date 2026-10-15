@@ -1,0 +1,142 @@
+from django.conf import settings
+from django.shortcuts import get_object_or_404
+from rest_framework import serializers, status
+from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
+from rest_framework.views import APIView
+
+from connections.models import PlaidAccount, PlaidItem
+from connections.plaid import PlaidError, configured, get_client
+from connections.sync import link_item, sync_item
+from portfolio.models import Account
+
+
+class PlaidThrottle(UserRateThrottle):
+    rate = "30/hour"  # every call costs a Plaid request
+
+
+class PlaidAccountSerializer(serializers.ModelSerializer):
+    account = serializers.PrimaryKeyRelatedField(queryset=Account.objects.all(), allow_null=True, required=False)
+    account_name = serializers.CharField(source="account.name", read_only=True, default=None)
+
+    class Meta:
+        model = PlaidAccount
+        fields = [
+            "id", "name", "official_name", "mask", "type", "subtype", "current_balance", "account", "account_name",
+            "enabled",
+        ]
+        read_only_fields = ["name", "official_name", "mask", "type", "subtype", "current_balance"]
+
+    def validate_account(self, value):
+        if value is not None and value.owner_id != self.context["request"].user.id:
+            raise serializers.ValidationError("Cuenta no encontrada.")
+        return value
+
+
+class PlaidItemSerializer(serializers.ModelSerializer):
+    accounts = PlaidAccountSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = PlaidItem
+        fields = ["id", "institution_name", "created_at", "last_synced_at", "last_error", "needs_reauth", "accounts"]
+
+
+def plaid_error(exc: PlaidError) -> Response:
+    return Response({"detail": exc.message or exc.code, "code": exc.code}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+class PlaidAPIView(APIView):
+    """Views that talk to Plaid; they answer 503 until PLAID_CLIENT_ID / PLAID_SECRET are configured."""
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        self.client = get_client() if configured() else None
+
+    def not_configured(self):
+        return Response(
+            {"detail": "Plaid no está configurado (PLAID_CLIENT_ID / PLAID_SECRET).", "code": "plaid_not_configured"},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    def item(self, request, pk) -> PlaidItem:
+        return get_object_or_404(PlaidItem, pk=pk, owner=request.user)
+
+
+class StatusView(APIView):
+    def get(self, request):
+        return Response({"configured": configured(), "env": settings.PLAID_ENV})
+
+
+class LinkTokenView(PlaidAPIView):
+    """Token for Plaid Link. With `item`, opens Link in update mode to re-authenticate that connection."""
+
+    throttle_classes = [PlaidThrottle]
+
+    def post(self, request):
+        if not self.client:
+            return self.not_configured()
+        item_id = request.data.get("item")
+        access_token = self.item(request, item_id).access_token if item_id else None
+        try:
+            return Response({"link_token": self.client.create_link_token(request.user.id, access_token)})
+        except PlaidError as exc:
+            return plaid_error(exc)
+
+
+class ExchangeView(PlaidAPIView):
+    """Called after Link's onSuccess: stores the connection (token encrypted) and lists its accounts."""
+
+    throttle_classes = [PlaidThrottle]
+
+    def post(self, request):
+        if not self.client:
+            return self.not_configured()
+        public_token = request.data.get("public_token")
+        if not public_token:
+            return Response({"detail": "Falta public_token."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            item = link_item(request.user, public_token, self.client)
+        except PlaidError as exc:
+            return plaid_error(exc)
+        return Response(PlaidItemSerializer(item, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+
+class ItemListView(APIView):
+    def get(self, request):
+        items = PlaidItem.objects.filter(owner=request.user).prefetch_related("accounts__account")
+        return Response(PlaidItemSerializer(items, many=True, context={"request": request}).data)
+
+
+class ItemView(PlaidAPIView):
+    def delete(self, request, pk):
+        """Disconnect: revoke the token at Plaid and forget it. Imported accounts and history stay."""
+        item = self.item(request, pk)
+        if self.client:
+            try:
+                self.client.remove_item(item.access_token)
+            except PlaidError as exc:
+                if exc.code != "ITEM_NOT_FOUND":
+                    return plaid_error(exc)
+        item.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SyncView(PlaidAPIView):
+    throttle_classes = [PlaidThrottle]
+
+    def post(self, request, pk):
+        if not self.client:
+            return self.not_configured()
+        report = sync_item(self.item(request, pk), self.client)
+        return Response(report, status=status.HTTP_502_BAD_GATEWAY if report["error"] else status.HTTP_200_OK)
+
+
+class AccountView(APIView):
+    """Choose which portfolio account a Plaid account feeds, or switch it off."""
+
+    def patch(self, request, pk):
+        pa = get_object_or_404(PlaidAccount, pk=pk, item__owner=request.user)
+        ser = PlaidAccountSerializer(pa, data=request.data, partial=True, context={"request": request})
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data)
