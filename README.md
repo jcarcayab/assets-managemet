@@ -84,3 +84,9 @@ Debt assets (class `debt`) are stored as positive balances and subtract from net
   sector shocks (e.g. crypto-company equity) apply when more severe than the category shock.
 - **Private equity** (`services/equity.py`): cliff + monthly vesting, liquidity discount, exercise cost,
   NSO tax / ISO AMT preference, and expiration alerts. Only vested equity counts toward net worth.
+- **Planning** (`services/planning.py`): budget (`BudgetItem`) with savings rate and emergency-fund months
+  (cash in accessible accounts vs. essential expenses); liabilities (`Liability`, subtracted from net worth)
+  in avalanche order with pay-vs-invest verdicts; Monte Carlo retirement in today's dollars — lognormal
+  returns, contributions + employer match, budget spending (or the withdrawal rate) minus Social Security,
+  success probability, 10/50/90 bands and the financial-independence number and age. Seeded, so the same
+  inputs give the same answer.

@@ -399,6 +399,65 @@ class Snapshot(models.Model):
         constraints = [models.UniqueConstraint(fields=["owner", "date"], name="uniq_snapshot_per_day")]
 
 
+class BudgetKind(models.TextChoices):
+    INCOME = "income", "Ingreso"
+    EXPENSE = "expense", "Gasto"
+
+
+class Frequency(models.TextChoices):
+    MONTHLY = "monthly", "Mensual"
+    ANNUAL = "annual", "Anual"
+
+
+class BudgetItem(models.Model):
+    """A recurring income or expense line of the household budget (net, after taxes for income)."""
+
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="budget_items")
+    name = models.CharField(max_length=100)
+    kind = models.CharField(max_length=10, choices=BudgetKind.choices, default=BudgetKind.EXPENSE)
+    category = models.CharField(max_length=60, blank=True)
+    amount = models.DecimalField(**MONEY, validators=[MinValueValidator(Decimal(0))])
+    frequency = models.CharField(max_length=10, choices=Frequency.choices, default=Frequency.MONTHLY)
+    essential = models.BooleanField(default=True, help_text="Gasto que seguirías pagando sin ingresos (fondo de emergencia).")
+    notes = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        ordering = ["kind", "-amount"]
+
+    @property
+    def monthly(self) -> Decimal:
+        return self.amount / 12 if self.frequency == Frequency.ANNUAL else self.amount
+
+
+class LiabilityKind(models.TextChoices):
+    MORTGAGE = "mortgage", "Hipoteca"
+    CREDIT_CARD = "credit_card", "Tarjeta de crédito"
+    STUDENT = "student", "Préstamo estudiantil"
+    AUTO = "auto", "Préstamo de auto"
+    PERSONAL = "personal", "Préstamo personal"
+    OTHER = "other", "Otro"
+
+
+class Liability(models.Model):
+    """Money owed. Subtracts from net worth; the balance is updated by hand."""
+
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="liabilities")
+    name = models.CharField(max_length=100)
+    kind = models.CharField(max_length=20, choices=LiabilityKind.choices, default=LiabilityKind.OTHER)
+    balance = models.DecimalField(**MONEY, validators=[MinValueValidator(Decimal(0))])
+    interest_rate_pct = models.DecimalField(
+        max_digits=6, decimal_places=3, default=Decimal(0), validators=[MinValueValidator(Decimal(0))],
+        help_text="Tasa anual (APR).",
+    )
+    minimum_payment = models.DecimalField(**MONEY, default=Decimal(0), help_text="Pago mínimo mensual.")
+    updated_at = models.DateTimeField(auto_now=True)
+    notes = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        ordering = ["-interest_rate_pct", "-balance"]
+        verbose_name_plural = "liabilities"
+
+
 class UserSettings(models.Model):
     owner = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="portfolio_settings")
     take_profit_1_pct = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal(10))
@@ -428,6 +487,16 @@ class UserSettings(models.Model):
     rebalance_threshold_pct = models.DecimalField(
         max_digits=6, decimal_places=2, default=Decimal(5), help_text="Desviación (puntos %) que dispara rebalanceo."
     )
+    emergency_fund_months = models.PositiveSmallIntegerField(default=6, help_text="Meses de gastos esenciales objetivo.")
+    expected_volatility_pct = models.DecimalField(
+        max_digits=6, decimal_places=2, default=Decimal(15), help_text="Volatilidad anual esperada para Monte Carlo."
+    )
+    employer_match_annual = models.DecimalField(**MONEY, default=Decimal(0), help_text="Aporte anual del empleador.")
+    social_security_annual = models.DecimalField(
+        **MONEY, default=Decimal(0), help_text="Beneficio anual estimado de Seguro Social (en dólares de hoy)."
+    )
+    social_security_age = models.PositiveSmallIntegerField(default=67)
+    life_expectancy = models.PositiveSmallIntegerField(default=95)
 
     @classmethod
     def for_user(cls, user) -> "UserSettings":

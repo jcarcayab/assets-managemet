@@ -13,11 +13,16 @@ from portfolio.models import (
     AllocationTarget,
     Asset,
     AssetClass,
+    BudgetItem,
+    BudgetKind,
     CashFlow,
     CashFlowKind,
     EquityGrant,
     ExposureCategory,
+    Frequency,
     GrantType,
+    Liability,
+    LiabilityKind,
     PriceSource,
     Snapshot,
     TaxTreatment,
@@ -29,6 +34,8 @@ from portfolio.serializers import (
     AccountSerializer,
     AllocationTargetSerializer,
     AssetSerializer,
+    BudgetItemSerializer,
+    LiabilitySerializer,
     CashFlowSerializer,
     EquityGrantSerializer,
     PositionSerializer,
@@ -43,6 +50,7 @@ from portfolio.services.risk import compute_risk
 from portfolio.services.taxes import compute_tax_lots
 from portfolio.services.history import BENCHMARKS, update_history
 from portfolio.services.performance import compute_income, compute_performance
+from portfolio.services.planning import compute_budget, compute_debts, monte_carlo
 from portfolio.services.positions import compute_positions, compute_summary
 from portfolio.services.prices import refresh_prices
 from portfolio.services.snapshots import take_snapshot
@@ -154,6 +162,16 @@ class EquityGrantViewSet(OwnedViewSet):
     owner_path = "account__owner"
 
 
+class BudgetItemViewSet(OwnedViewSet):
+    queryset = BudgetItem.objects.all()
+    serializer_class = BudgetItemSerializer
+
+
+class LiabilityViewSet(OwnedViewSet):
+    queryset = Liability.objects.all()
+    serializer_class = LiabilitySerializer
+
+
 class SnapshotViewSet(OwnedViewSet):
     queryset = Snapshot.objects.all()
     serializer_class = SnapshotSerializer
@@ -227,6 +245,21 @@ def equity_summary_view(request):
     return Response(compute_equity(request.user))
 
 
+@api_view(["GET"])
+def budget_view(request):
+    return Response(compute_budget(request.user))
+
+
+@api_view(["GET"])
+def debts_view(request):
+    return Response(compute_debts(request.user))
+
+
+@api_view(["GET"])
+def monte_carlo_view(request):
+    return Response(monte_carlo(request.user, base=request.query_params.get("base", "net_worth_ex_private")))
+
+
 @api_view(["GET", "PATCH"])
 def settings_view(request):
     obj = UserSettings.for_user(request.user)
@@ -255,6 +288,9 @@ def choices_view(request):
             "tax_treatments": as_list(TaxTreatment),
             "exposure_categories": as_list(ExposureCategory),
             "grant_types": as_list(GrantType),
+            "budget_kinds": as_list(BudgetKind),
+            "frequencies": as_list(Frequency),
+            "liability_kinds": as_list(LiabilityKind),
             "benchmarks": [{"value": k, "label": v} for k, v in BENCHMARKS.items()],
         }
     )

@@ -82,7 +82,15 @@ export default function Dashboard() {
       )}
 
       <div className="kpis">
-        <Kpi label="Patrimonio total" value={money(s.net_worth, true)} sub={`sin equity privada: ${money(s.net_worth_ex_private, true)}`} />
+        <Kpi
+          label="Patrimonio total"
+          value={money(s.net_worth, true)}
+          sub={
+            Number(s.liabilities)
+              ? `activos ${money(s.assets, true)} − deudas ${money(s.liabilities, true)}`
+              : `sin equity privada: ${money(s.net_worth_ex_private, true)}`
+          }
+        />
         <Kpi
           label="Después de impuestos"
           value={money(s.after_tax_net_worth, true)}

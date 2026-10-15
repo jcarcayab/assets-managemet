@@ -52,7 +52,84 @@ export type Choices = {
   tax_treatments: Choice[]
   exposure_categories: Choice[]
   grant_types: Choice[]
+  budget_kinds: Choice[]
+  frequencies: Choice[]
+  liability_kinds: Choice[]
   benchmarks: Choice[]
+}
+
+export type BudgetItem = {
+  id: number
+  name: string
+  kind: 'income' | 'expense'
+  kind_label: string
+  category: string
+  amount: number
+  frequency: 'monthly' | 'annual'
+  monthly: number
+  essential: boolean
+  notes: string
+}
+
+export type Liability = {
+  id: number
+  name: string
+  kind: string
+  kind_label: string
+  balance: number
+  interest_rate_pct: number
+  minimum_payment: number
+  updated_at: string
+  notes: string
+}
+
+export type Budget = {
+  monthly_income: number
+  monthly_expenses: number
+  monthly_essential: number
+  monthly_savings: number
+  savings_rate: number | null
+  annual_expenses: number
+  emergency_cash: number
+  emergency_months: number | null
+  emergency_target_months: number
+  emergency_target: number
+  emergency_gap: number
+  by_category: { label: string; monthly: number; share: number | null }[]
+}
+
+export type Debts = {
+  expected_return_pct: number
+  total: number
+  weighted_rate_pct: number | null
+  minimum_payments: number
+  annual_interest: number
+  rows: {
+    id: number
+    order: number
+    name: string
+    kind_label: string
+    balance: number
+    interest_rate_pct: number
+    minimum_payment: number
+    annual_interest: number
+    months_to_payoff: number | null
+    total_interest: number | null
+    verdict: 'pay_first' | 'either' | 'invest'
+  }[]
+}
+
+export type MonteCarlo = {
+  base: string
+  start: number
+  paths: number
+  success_probability: number
+  uses_budget: boolean
+  annual_spending: number | null
+  fi_number: number | null
+  fi_age: number | null
+  at_retirement: { age: number; p10: number; p50: number; p90: number }
+  bands: { age: number; p10: number; p50: number; p90: number }[]
 }
 
 export type Account = {
@@ -306,6 +383,8 @@ export type Summary = {
   net_worth_ex_private: number
   after_tax_net_worth: number
   estimated_taxes: number
+  assets: number
+  liabilities: number
   liquid: number
   illiquid: number
   cost: number
@@ -391,6 +470,12 @@ export type Settings = {
   ordinary_income_tax_pct: number
   target_allocation: Record<string, number>
   rebalance_threshold_pct: number
+  emergency_fund_months: number
+  expected_volatility_pct: number
+  employer_match_annual: number
+  social_security_annual: number
+  social_security_age: number
+  life_expectancy: number
 }
 
 export type User = { id: number; username: string }

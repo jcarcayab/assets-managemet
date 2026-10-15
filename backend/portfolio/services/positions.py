@@ -15,6 +15,7 @@ from portfolio.models import (
     CashFlow,
     EquityGrant,
     GrantType,
+    Liability,
     PriceSource,
     TaxTreatment,
     Transaction,
@@ -347,7 +348,9 @@ def _group(positions, key_fn, label_fn):
 def compute_summary(user) -> dict:
     s = UserSettings.for_user(user)
     positions = compute_positions(user)
-    net_worth = sum((p.market_value for p in positions), ZERO)
+    assets_value = sum((p.market_value for p in positions), ZERO)
+    liabilities = sum((lb.balance for lb in Liability.objects.filter(owner=user)), ZERO)
+    net_worth = assets_value - liabilities
     cost = sum((p.cost_basis for p in positions), ZERO)
     private = sum((p.market_value for p in positions if p.asset_class == AssetClass.PRIVATE_EQUITY), ZERO)
     liquid = sum((p.market_value for p in positions if p.account.is_liquid), ZERO)
@@ -357,7 +360,7 @@ def compute_summary(user) -> dict:
         for g in groups.values():
             g["gain"] = g["value"] - g["cost"]
             g["gain_pct"] = pct(g["gain"], abs(g["cost"]))
-            g["weight"] = pct(g["value"], net_worth)
+            g["weight"] = pct(g["value"], assets_value)
             rows.append(g)
         return sorted(rows, key=lambda r: -r["value"])
 
@@ -404,11 +407,13 @@ def compute_summary(user) -> dict:
         "net_worth_ex_private": net_worth - private,
         "after_tax_net_worth": net_worth - taxes,
         "estimated_taxes": taxes,
+        "assets": assets_value,
+        "liabilities": liabilities,
         "liquid": liquid,
-        "illiquid": net_worth - liquid,
+        "illiquid": assets_value - liquid,
         "cost": cost,
-        "unrealized": net_worth - cost,
-        "unrealized_pct": pct(net_worth - cost, abs(cost)),
+        "unrealized": assets_value - cost,
+        "unrealized_pct": pct(assets_value - cost, abs(cost)),
         "prices_as_of": min(live_prices_at) if live_prices_at else None,
         "income_12m": income_since(user, timezone.localdate() - dt.timedelta(days=365)),
         "by_account": finish(by_account),
