@@ -1,11 +1,7 @@
-from django.contrib.auth import authenticate, login, logout
 from django.db.models.deletion import ProtectedError
-from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import status, viewsets
-from rest_framework.decorators import api_view, permission_classes, throttle_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
 
 from portfolio.models import (
     Account,
@@ -54,43 +50,6 @@ from portfolio.services.planning import compute_budget, compute_debts, monte_car
 from portfolio.services.positions import compute_positions, compute_summary
 from portfolio.services.prices import refresh_prices
 from portfolio.services.snapshots import take_snapshot
-
-# -- auth -------------------------------------------------------------------------------------------
-
-
-def _me(user):
-    return {"id": user.id, "username": user.username}
-
-
-class LoginThrottle(ScopedRateThrottle):
-    scope = "login"
-
-
-@api_view(["GET"])
-@permission_classes([AllowAny])
-@ensure_csrf_cookie
-def session(request):
-    """Sets the CSRF cookie and reports whether the user is logged in."""
-    user = request.user if request.user.is_authenticated else None
-    return Response({"user": _me(user) if user else None})
-
-
-@api_view(["POST"])
-@permission_classes([AllowAny])
-@throttle_classes([LoginThrottle])
-def login_view(request):
-    user = authenticate(request, username=request.data.get("username"), password=request.data.get("password"))
-    if user is None:
-        return Response({"detail": "Usuario o contraseña incorrectos."}, status=status.HTTP_400_BAD_REQUEST)
-    login(request, user)
-    return Response({"user": _me(user)})
-
-
-@api_view(["POST"])
-def logout_view(request):
-    logout(request)
-    return Response(status=status.HTTP_204_NO_CONTENT)
-
 
 # -- CRUD -------------------------------------------------------------------------------------------
 

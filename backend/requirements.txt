@@ -1,3 +1,4 @@
+cryptography==50.0.2
 dj-database-url==3.1.2
 Django==5.2.18
 djangorestframework==3.18.3
@@ -5,7 +6,9 @@ gunicorn==26.2.0
 openpyxl==3.1.5
 psycopg==3.3.6
 psycopg-binary==3.3.6
+PyOTP==2.10.0
 python-dotenv==1.2.4
 requests==2.34.2
+segno==1.6.6
 whitenoise==6.12.0
 yfinance==1.7.0

@@ -5,7 +5,7 @@ import type { Choice } from '../api'
 export type Field = {
   name: string
   label: string
-  type?: 'text' | 'number' | 'date' | 'select' | 'checkbox' | 'textarea'
+  type?: 'text' | 'password' | 'number' | 'date' | 'select' | 'checkbox' | 'textarea'
   options?: Choice[]
   required?: boolean
   /** Empty input is sent as null instead of "" */

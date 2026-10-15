@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "security",
     "portfolio",
 ]
 
@@ -103,10 +104,16 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
-    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
-    "DEFAULT_THROTTLE_RATES": {"login": "10/min"},
+    "DEFAULT_PERMISSION_CLASSES": ["security.permissions.MFASatisfied"],
+    "DEFAULT_THROTTLE_RATES": {"login": "10/min", "mfa": "10/min"},
     "COERCE_DECIMAL_TO_STRING": False,
 }
+
+# Every user must enroll in 2FA before using the app (recommended for a hosted deployment).
+MFA_REQUIRED = env_bool("MFA_REQUIRED", False)
+# Key for secrets stored encrypted in the DB (TOTP seeds, Plaid tokens). Falls back to SECRET_KEY; set it
+# explicitly in production so rotating SECRET_KEY doesn't make those secrets unreadable.
+FIELD_ENCRYPTION_KEY = os.environ.get("FIELD_ENCRYPTION_KEY", "")
 
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 14
 SESSION_COOKIE_SAMESITE = "Lax"

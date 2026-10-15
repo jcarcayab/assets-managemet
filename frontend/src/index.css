@@ -715,6 +715,74 @@ button:focus-visible {
   padding: 0 0 0.5rem;
 }
 
+/* -- 2FA ------------------------------------------------------------------------------------------ */
+
+.login-card.wide {
+  width: min(440px, 100%);
+}
+
+.twofa {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.twofa .steps {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.qr {
+  align-self: center;
+  background: #fff;
+  padding: 0.5rem;
+  border-radius: 8px;
+  line-height: 0;
+}
+
+.qr svg {
+  width: 200px;
+  height: 200px;
+}
+
+.secret {
+  display: inline-block;
+  margin-top: 0.4rem;
+  letter-spacing: 0.08em;
+  word-break: break-all;
+}
+
+.code-input input {
+  font-size: 1.4rem;
+  letter-spacing: 0.3em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.code-input {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.recovery-codes {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.4rem;
+}
+
+.recovery-codes code {
+  display: block;
+  text-align: center;
+  padding: 0.35rem;
+  font-size: 0.95rem;
+}
+
 /* -- mobile --------------------------------------------------------------------------------------- */
 
 @media (max-width: 760px) {
