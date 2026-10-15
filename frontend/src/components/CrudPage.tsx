@@ -22,6 +22,8 @@ type Props<T extends { id: number }> = {
   emptyText?: string
   actions?: ReactNode
   intro?: ReactNode
+  /** Reshape the form payload before sending (e.g. fold several inputs into one JSON field) */
+  toPayload?: (body: Record<string, unknown>, values: FormValues) => Record<string, unknown>
 }
 
 export function CrudPage<T extends { id: number }>(props: Props<T>) {
@@ -85,7 +87,7 @@ export function CrudPage<T extends { id: number }>(props: Props<T>) {
           title={editing === 'new' ? `Nuevo: ${noun}` : `Editar: ${noun}`}
           fields={fields}
           initial={editing === 'new' ? defaults : toForm(editing)}
-          onSubmit={(body) => save.mutateAsync(body)}
+          onSubmit={(body, values) => save.mutateAsync(props.toPayload ? props.toPayload(body, values) : body)}
           onDelete={editing !== 'new' ? () => remove.mutateAsync(editing.id) : undefined}
           onClose={() => setEditing(null)}
         />

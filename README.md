@@ -51,13 +51,26 @@ a daily snapshot. On a PaaS without compose, run the same image and schedule
 
 | Model | Purpose |
 |---|---|
-| `Account` | Broker/IRA/401k/crypto/bank/loan/equity… `is_liquid` separates accessible money from retirement. |
-| `Asset` | Symbol + class + price source (`yahoo`/`coingecko`/`manual`). |
-| `Transaction` | Buy/sell with qty, price, fees. Positions are derived from these (average cost). |
-| `CashFlow` | Deposits/withdrawals into an account — used for "return vs. deposited". |
+| `Account` | Broker/IRA/401k/crypto/bank/loan/equity… `is_liquid` separates accessible money from retirement; `tax_treatment` (taxable / tax-deferred / tax-free) drives the after-tax estimate. |
+| `Asset` | Symbol + class + price source (`yahoo`/`coingecko`/`manual`), plus `underlying` (e.g. "S&P 500"), `sector` and an optional `exposures` breakdown for multi-asset funds. |
+| `Transaction` | Ledger entry: buy, sell, dividend, interest, staking, fee, split, transfer. Positions are derived from these (average cost); dividends/interest/fees move the account's USD cash. |
+| `CashFlow` | Deposits/withdrawals/employer match into an account — used for "return vs. deposited". |
 | `AllocationTarget` | Target % per asset within an account → rebalance amounts. |
 | `EquityGrant` | Private-company options; unexercised valued at (FMV − strike). |
 | `Snapshot` | Daily net-worth photo for the history chart. |
-| `UserSettings` | Take-profit/stop-loss %, retirement-projection assumptions. |
+| `PriceHistory` | Daily closes from Yahoo (crypto as `SOL-USD`) for owned assets and benchmarks. |
+| `UserSettings` | TP/SL %, retirement assumptions, benchmark, concentration limit, flat tax rates. |
 
 Debt assets (class `debt`) are stored as positive balances and subtract from net worth.
+
+## Analytics
+
+- **Performance** (`services/performance.py`): holdings are re-valued daily from the ledger and `PriceHistory`.
+  Time-weighted return (TWR) per period vs. a benchmark, money-weighted return (XIRR; not annualized for
+  periods under a year), and a "same contributions in the benchmark" comparison. Flows are measured at the
+  security level (buy = money in, sell = money out; dividends/interest/staking stay as return). Private
+  equity and debt are excluded. `refresh_prices` also fetches missing history.
+- **Exposure** (`services/exposure.py`): look-through by category, grouping by underlying (VOO + FXAIX →
+  S&P 500) and by sector (e.g. crypto assets + crypto-company options), with alerts above the limit.
+- **After-tax net worth** (`services/positions.py`): flat-rate estimate — capital gains on taxable accounts,
+  the full balance of tax-deferred accounts, and the option spread as ordinary income.

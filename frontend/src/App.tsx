@@ -5,6 +5,8 @@ import type { User } from './api'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Holdings from './pages/Holdings'
+import Performance from './pages/Performance'
+import Exposure from './pages/Exposure'
 import Transactions from './pages/Transactions'
 import Accounts from './pages/Accounts'
 import Assets from './pages/Assets'
@@ -16,6 +18,8 @@ import SettingsPage from './pages/Settings'
 const NAV = [
   { to: '/', label: 'Resumen', end: true },
   { to: '/posiciones', label: 'Posiciones' },
+  { to: '/rendimiento', label: 'Rendimiento' },
+  { to: '/exposicion', label: 'Exposición' },
   { to: '/movimientos', label: 'Movimientos' },
   { to: '/cuentas', label: 'Cuentas' },
   { to: '/activos', label: 'Activos' },
@@ -58,6 +62,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/posiciones" element={<Holdings />} />
+          <Route path="/rendimiento" element={<Performance />} />
+          <Route path="/exposicion" element={<Exposure />} />
           <Route path="/movimientos" element={<Transactions />} />
           <Route path="/cuentas" element={<Accounts />} />
           <Route path="/activos" element={<Assets />} />

@@ -70,9 +70,13 @@ def test_refresh_prices_updates_live_assets_only(api, user):
     Asset.objects.create(owner=user, symbol="SOL", price_source="coingecko", source_id="solana")
     Asset.objects.create(owner=user, symbol="FUND", price_source="manual", manual_price=10)
     fetchers = {"yahoo": lambda ids: {"VOO": D(500)}, "coingecko": lambda ids: {}}
-    with mock.patch.dict("portfolio.services.prices.FETCHERS", fetchers):
+    with (
+        mock.patch.dict("portfolio.services.prices.FETCHERS", fetchers),
+        mock.patch("portfolio.views.update_history", return_value={"saved": 0, "failed": []}),
+    ):
         result = api.post("/api/prices/refresh/").json()
-    assert result == {"updated": ["VOO"], "failed": ["SOL"]}
+    assert result["updated"] == ["VOO"]
+    assert result["failed"] == ["SOL"]
     assert Asset.objects.get(symbol="VOO").last_price == 500
 
 

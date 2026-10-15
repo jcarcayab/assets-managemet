@@ -12,6 +12,10 @@ export type Field = {
   nullable?: boolean
   help?: string
   step?: string
+  /** Only render (and submit) the field when this returns true for the current values */
+  show?: (values: FormValues) => boolean
+  /** Rendered and editable, but never sent (e.g. a toggle that reveals other fields) */
+  local?: boolean
 }
 
 export type FormValues = Record<string, string | boolean>
@@ -20,7 +24,7 @@ type Props = {
   title: string
   fields: Field[]
   initial: FormValues
-  onSubmit: (values: Record<string, unknown>) => Promise<unknown>
+  onSubmit: (payload: Record<string, unknown>, values: FormValues) => Promise<unknown>
   onDelete?: () => Promise<unknown>
   onClose: () => void
   footer?: ReactNode
@@ -29,9 +33,13 @@ type Props = {
 function toPayload(fields: Field[], values: FormValues) {
   const out: Record<string, unknown> = {}
   for (const f of fields) {
+    if (f.local || (f.show && !f.show(values))) continue
     const v = values[f.name]
     if (f.type === 'checkbox') out[f.name] = Boolean(v)
-    else if (v === '' || v === undefined) out[f.name] = f.nullable ? null : ''
+    else if (v === '' || v === undefined) {
+      if (f.nullable) out[f.name] = null
+      else if (f.type !== 'number') out[f.name] = '' // empty optional numbers are left to the server default
+    }
     else out[f.name] = v
   }
   return out
@@ -63,7 +71,7 @@ export function FormModal({ title, fields, initial, onSubmit, onDelete, onClose,
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    run(() => onSubmit(toPayload(fields, values)))
+    run(() => onSubmit(toPayload(fields, values), values))
   }
 
   const set = (name: string, v: string | boolean) => setValues((prev) => ({ ...prev, [name]: v }))
@@ -79,6 +87,7 @@ export function FormModal({ title, fields, initial, onSubmit, onDelete, onClose,
         </header>
         <div className="form-grid">
           {fields.map((f) => {
+            if (f.show && !f.show(values)) return null
             const id = `f-${f.name}`
             const value = values[f.name]
             if (f.type === 'checkbox') {

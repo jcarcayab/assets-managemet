@@ -51,6 +51,17 @@ ASSET_CLASSES = {
 
 COINGECKO_IDS = {"BTC": "bitcoin", "ETH": "ethereum", "XRP": "ripple", "SOL": "solana"}
 
+# Funds tracking the same index are grouped for concentration (look-through) purposes.
+UNDERLYING = {"VOO": "S&P 500", "FXAIX": "S&P 500", "SPY": "S&P 500", "IVV": "S&P 500", "SWPPX": "S&P 500"}
+
+# Approximate look-through mix of multi-asset funds (verify against the fund's latest fact sheet).
+EXPOSURES = {
+    "TR2055": {"us_equity": 54, "intl_equity": 36, "bonds": 10},
+    "IAU": {"commodities": 100},
+}
+
+CRYPTO_SECTOR = "Crypto"
+
 # Spreadsheet metal names -> (symbol, Yahoo futures ticker, display name)
 METALS = {
     "oro": ("XAU", "GC=F", "Oro (oz)"),
@@ -206,6 +217,8 @@ class LegacyImporter:
                 asset_class=asset_class,
                 price_source=source,
                 manual_price=manual if source == PriceSource.MANUAL else None,
+                underlying=UNDERLYING.get(symbol, ""),
+                exposures=EXPOSURES.get(symbol, {}),
             )
             qty, cost = _dec(row.get("Cantidad")), _dec(row.get("Costo prom."))
             if qty:
@@ -233,6 +246,7 @@ class LegacyImporter:
                 asset_class=AssetClass.CRYPTO,
                 price_source=PriceSource.COINGECKO,
                 source_id=COINGECKO_IDS.get(symbol, symbol.lower()),
+                sector=CRYPTO_SECTOR,
             )
             date = _date(row.get("Fecha"))
             notes = [] if date else ["Fecha desconocida en Excel"]
@@ -297,6 +311,8 @@ class LegacyImporter:
                 strike=strike,
                 fmv=fmv,
                 exercised=str(row.get("¿Ejercidas?") or "").lower().startswith("s"),
+                # CoinRoutes is crypto trading infrastructure: its value moves with the crypto market.
+                sector=CRYPTO_SECTOR if company.lower() == "coinroutes" else "",
             )
             self.report.equity_grants += 1
 

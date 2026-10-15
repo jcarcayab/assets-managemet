@@ -8,8 +8,10 @@ from portfolio.models import (
     Asset,
     CashFlow,
     EquityGrant,
+    ExposureCategory,
     Snapshot,
     Transaction,
+    TransactionKind,
     UserSettings,
 )
 
@@ -23,10 +25,14 @@ class OwnedQuerysetField(serializers.PrimaryKeyRelatedField):
 
 class AccountSerializer(serializers.ModelSerializer):
     account_type_label = serializers.CharField(source="get_account_type_display", read_only=True)
+    tax_treatment_label = serializers.CharField(source="get_tax_treatment_display", read_only=True)
 
     class Meta:
         model = Account
-        fields = ["id", "name", "institution", "account_type", "account_type_label", "is_liquid", "notes", "archived"]
+        fields = [
+            "id", "name", "institution", "account_type", "account_type_label", "is_liquid",
+            "tax_treatment", "tax_treatment_label", "notes", "archived",
+        ]
 
 
 class AssetSerializer(serializers.ModelSerializer):
@@ -37,36 +43,100 @@ class AssetSerializer(serializers.ModelSerializer):
         model = Asset
         fields = [
             "id", "symbol", "name", "asset_class", "asset_class_label", "price_source", "source_id",
-            "manual_price", "last_price", "last_price_at", "price",
+            "manual_price", "last_price", "last_price_at", "price", "underlying", "sector", "exposures",
         ]
         read_only_fields = ["last_price", "last_price_at"]
 
     def validate_symbol(self, value):
         return value.strip().upper()
 
+    def validate_exposures(self, value):
+        if not value:
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Debe ser un objeto {categoría: %}.")
+        valid = dict(ExposureCategory.choices)
+        cleaned = {}
+        for key, pct in value.items():
+            if key not in valid:
+                raise serializers.ValidationError(f"Categoría desconocida: {key}")
+            try:
+                pct = float(pct or 0)
+            except (TypeError, ValueError) as exc:
+                raise serializers.ValidationError(f"{key}: debe ser un número.") from exc
+            if pct < 0:
+                raise serializers.ValidationError(f"{key}: no puede ser negativo.")
+            if pct:
+                cleaned[key] = pct
+        if cleaned and abs(sum(cleaned.values()) - 100) > 0.5:
+            raise serializers.ValidationError(f"Los porcentajes deben sumar 100 (suman {sum(cleaned.values()):g}).")
+        return cleaned
+
 
 class TransactionSerializer(serializers.ModelSerializer):
     account = OwnedQuerysetField(queryset=Account.objects.all())
     asset = OwnedQuerysetField(queryset=Asset.objects.all())
+    to_account = OwnedQuerysetField(queryset=Account.objects.all(), required=False, allow_null=True)
     account_name = serializers.CharField(source="account.name", read_only=True)
+    to_account_name = serializers.CharField(source="to_account.name", read_only=True, default=None)
     asset_symbol = serializers.CharField(source="asset.symbol", read_only=True)
+    kind_label = serializers.CharField(source="get_kind_display", read_only=True)
     total = serializers.DecimalField(max_digits=28, decimal_places=10, read_only=True)
 
     class Meta:
         model = Transaction
         fields = [
-            "id", "account", "account_name", "asset", "asset_symbol", "kind", "date", "quantity", "price",
-            "fees", "total", "external_id", "notes",
+            "id", "account", "account_name", "asset", "asset_symbol", "kind", "kind_label", "date", "quantity",
+            "price", "fees", "amount", "to_account", "to_account_name", "total", "external_id", "notes",
         ]
+
+    # Which fields each kind needs to be > 0.
+    REQUIRED = {
+        TransactionKind.BUY: ["quantity"],
+        TransactionKind.SELL: ["quantity"],
+        TransactionKind.STAKING: ["quantity"],
+        TransactionKind.DIVIDEND: ["amount"],
+        TransactionKind.INTEREST: ["amount"],
+        TransactionKind.FEE: ["amount"],
+        TransactionKind.SPLIT: ["quantity"],
+        TransactionKind.TRANSFER: ["quantity"],
+    }
+
+    def validate(self, attrs):
+        merged = {**({} if self.instance is None else self._current()), **attrs}
+        kind = merged.get("kind", TransactionKind.BUY)
+        errors = {}
+        for name in self.REQUIRED.get(kind, []):
+            if not merged.get(name):
+                errors[name] = "Requerido y mayor que 0 para este tipo."
+        if kind == TransactionKind.TRANSFER:
+            dest = merged.get("to_account")
+            if dest is None:
+                errors["to_account"] = "Indica la cuenta destino."
+            elif dest == merged.get("account"):
+                errors["to_account"] = "La cuenta destino debe ser distinta."
+        elif merged.get("to_account") is not None:
+            attrs["to_account"] = None
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
+    def _current(self):
+        i = self.instance
+        return {
+            "kind": i.kind, "quantity": i.quantity, "amount": i.amount, "account": i.account,
+            "to_account": i.to_account,
+        }
 
 
 class CashFlowSerializer(serializers.ModelSerializer):
     account = OwnedQuerysetField(queryset=Account.objects.all())
     account_name = serializers.CharField(source="account.name", read_only=True)
+    kind_label = serializers.CharField(source="get_kind_display", read_only=True)
 
     class Meta:
         model = CashFlow
-        fields = ["id", "account", "account_name", "date", "amount", "notes"]
+        fields = ["id", "account", "account_name", "kind", "kind_label", "date", "amount", "notes"]
 
 
 class AllocationTargetSerializer(serializers.ModelSerializer):
@@ -91,7 +161,7 @@ class EquityGrantSerializer(serializers.ModelSerializer):
     class Meta:
         model = EquityGrant
         fields = [
-            "id", "account", "company", "quantity", "strike", "fmv", "exercised", "grant_date", "notes",
+            "id", "account", "company", "quantity", "strike", "fmv", "exercised", "grant_date", "sector", "notes",
             "cost_basis", "market_value",
         ]
 
@@ -125,6 +195,7 @@ class PositionSerializer(serializers.Serializer):
     unrealized = serializers.DecimalField(max_digits=28, decimal_places=2)
     unrealized_pct = serializers.DecimalField(max_digits=12, decimal_places=4, allow_null=True)
     realized = serializers.DecimalField(max_digits=28, decimal_places=2)
+    income = serializers.DecimalField(max_digits=28, decimal_places=2)
     weight_in_account = serializers.DecimalField(max_digits=12, decimal_places=4, allow_null=True)
     target_pct = serializers.DecimalField(max_digits=12, decimal_places=4, allow_null=True)
     target_value = serializers.DecimalField(max_digits=28, decimal_places=2, allow_null=True)

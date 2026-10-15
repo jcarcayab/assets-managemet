@@ -14,9 +14,12 @@ from portfolio.models import (
     Asset,
     AssetClass,
     CashFlow,
+    CashFlowKind,
     EquityGrant,
+    ExposureCategory,
     PriceSource,
     Snapshot,
+    TaxTreatment,
     Transaction,
     TransactionKind,
     UserSettings,
@@ -32,6 +35,9 @@ from portfolio.serializers import (
     TransactionSerializer,
     UserSettingsSerializer,
 )
+from portfolio.services.exposure import compute_exposure
+from portfolio.services.history import BENCHMARKS, update_history
+from portfolio.services.performance import compute_income, compute_performance
 from portfolio.services.positions import compute_positions, compute_summary
 from portfolio.services.prices import refresh_prices
 from portfolio.services.snapshots import take_snapshot
@@ -170,7 +176,30 @@ def summary_view(request):
 
 @api_view(["POST"])
 def refresh_prices_view(request):
-    return Response(refresh_prices(Asset.objects.filter(owner=request.user)))
+    result = refresh_prices(Asset.objects.filter(owner=request.user))
+    result["history"] = update_history(request.user)
+    return Response(result)
+
+
+@api_view(["GET"])
+def performance_view(request):
+    account = request.query_params.get("account")
+    if account and not Account.objects.filter(owner=request.user, id=account).exists():
+        return Response({"detail": "Cuenta no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+    benchmark = request.query_params.get("benchmark") or None
+    if benchmark and benchmark not in BENCHMARKS:
+        return Response({"detail": "Benchmark no soportado."}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(compute_performance(request.user, int(account) if account else None, benchmark))
+
+
+@api_view(["GET"])
+def income_view(request):
+    return Response(compute_income(request.user))
+
+
+@api_view(["GET"])
+def exposure_view(request):
+    return Response(compute_exposure(request.user))
 
 
 @api_view(["GET", "PATCH"])
@@ -197,5 +226,9 @@ def choices_view(request):
             "asset_classes": as_list(AssetClass),
             "price_sources": as_list(PriceSource),
             "transaction_kinds": as_list(TransactionKind),
+            "cash_flow_kinds": as_list(CashFlowKind),
+            "tax_treatments": as_list(TaxTreatment),
+            "exposure_categories": as_list(ExposureCategory),
+            "benchmarks": [{"value": k, "label": v} for k, v in BENCHMARKS.items()],
         }
     )

@@ -48,6 +48,10 @@ export type Choices = {
   asset_classes: Choice[]
   price_sources: Choice[]
   transaction_kinds: Choice[]
+  cash_flow_kinds: Choice[]
+  tax_treatments: Choice[]
+  exposure_categories: Choice[]
+  benchmarks: Choice[]
 }
 
 export type Account = {
@@ -57,6 +61,8 @@ export type Account = {
   account_type: string
   account_type_label: string
   is_liquid: boolean
+  tax_treatment: string
+  tax_treatment_label: string
   notes: string
   archived: boolean
 }
@@ -73,7 +79,12 @@ export type Asset = {
   last_price: number | null
   last_price_at: string | null
   price: number
+  underlying: string
+  sector: string
+  exposures: Record<string, number>
 }
+
+export type TransactionKind = 'buy' | 'sell' | 'dividend' | 'interest' | 'staking' | 'fee' | 'split' | 'transfer'
 
 export type Transaction = {
   id: number
@@ -81,17 +92,30 @@ export type Transaction = {
   account_name: string
   asset: number
   asset_symbol: string
-  kind: 'buy' | 'sell'
+  kind: TransactionKind
+  kind_label: string
   date: string
   quantity: number
   price: number
   fees: number
+  amount: number
+  to_account: number | null
+  to_account_name: string | null
   total: number
   external_id: string
   notes: string
 }
 
-export type CashFlow = { id: number; account: number; account_name: string; date: string; amount: number; notes: string }
+export type CashFlow = {
+  id: number
+  account: number
+  account_name: string
+  kind: 'deposit' | 'withdrawal' | 'employer'
+  kind_label: string
+  date: string
+  amount: number
+  notes: string
+}
 
 export type EquityGrant = {
   id: number
@@ -102,6 +126,7 @@ export type EquityGrant = {
   fmv: number
   exercised: boolean
   grant_date: string | null
+  sector: string
   notes: string
   cost_basis: number
   market_value: number
@@ -124,6 +149,7 @@ export type Position = {
   unrealized: number
   unrealized_pct: number | null
   realized: number
+  income: number
   weight_in_account: number | null
   target_pct: number | null
   target_value: number | null
@@ -147,15 +173,63 @@ export type Group = {
 export type Summary = {
   net_worth: number
   net_worth_ex_private: number
+  after_tax_net_worth: number
+  estimated_taxes: number
   liquid: number
   illiquid: number
   cost: number
   unrealized: number
   unrealized_pct: number | null
   prices_as_of: string | null
+  income_12m: { dividend: number; interest: number; staking: number; fees: number; total: number }
   by_account: Group[]
   by_class: Group[]
+  by_tax_treatment: { key: string; label: string; value: number; tax: number; after_tax: number }[]
   crypto: { deposits: number; value: number; gain: number; gain_pct: number | null }
+}
+
+export type Period = {
+  key: string
+  start: string
+  days: number
+  twr: number
+  twr_annualized: number | null
+  benchmark: number | null
+  xirr: number | null
+  xirr_annualized: boolean
+}
+
+export type Performance =
+  | { empty: true; benchmark: string; benchmark_label: string }
+  | {
+      empty: false
+      benchmark: string
+      benchmark_label: string
+      start: string
+      value: number
+      net_invested: number
+      gain: number
+      benchmark_equivalent: number | null
+      missing_benchmark: boolean
+      recent_contribution_share: number
+      periods: Period[]
+      series: { date: string; value: number; invested: number; twr: number; benchmark: number | null }[]
+    }
+
+export type Income = {
+  by_year: { year: number; dividend: number; interest: number; staking: number; fees: number; total: number }[]
+  by_asset_12m: { symbol: string; value: number }[]
+}
+
+export type ExposureRow = { key: string; label: string; value: number; weight: number | null; via?: string[] }
+
+export type Exposure = {
+  gross_assets: number
+  limit: number
+  by_category: ExposureRow[]
+  by_holding: ExposureRow[]
+  by_sector: ExposureRow[]
+  alerts: { kind: 'holding' | 'sector'; label: string; weight: number; value: number; via: string[] }[]
 }
 
 export type Snapshot = {
@@ -179,6 +253,11 @@ export type Settings = {
   annual_contribution: number
   withdrawal_rate_pct: number
   inflation_pct: number
+  benchmark: string
+  concentration_limit_pct: number
+  capital_gains_tax_pct: number
+  retirement_tax_pct: number
+  ordinary_income_tax_pct: number
 }
 
 export type User = { id: number; username: string }
