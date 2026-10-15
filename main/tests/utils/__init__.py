@@ -1,1 +1,0 @@
-from .main import print_test_case_result

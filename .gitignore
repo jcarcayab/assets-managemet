@@ -1,5 +1,18 @@
 .venv
+__pycache__/
+.pytest_cache/
 
 pgdata
+*.sqlite3
+backend/staticfiles/
 
 .env
+
+# Personal financial data — import with `manage.py import_excel`, never commit
+*.xlsx
+
+frontend/node_modules/
+frontend/dist/
+
+.idea/
+.DS_Store
