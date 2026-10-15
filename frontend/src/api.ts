@@ -36,8 +36,22 @@ export async function api<T = unknown>(path: string, init: { method?: string; bo
   })
   if (res.status === 204) return undefined as T
   const data = await res.json().catch(() => null)
-  if (!res.ok) throw new ApiError(res.status, data)
+  if (!res.ok) {
+    const code = (data as { code?: string } | null)?.code
+    if (res.status === 403 && (code === 'mfa_required' || code === 'mfa_setup_required')) {
+      // The server wants the second factor (or enrollment): let the app re-check the session.
+      window.dispatchEvent(new Event(AUTH_CHANGED))
+    }
+    throw new ApiError(res.status, data)
+  }
   return data as T
+}
+
+export const AUTH_CHANGED = 'auth-changed'
+
+/** Only same-site paths are allowed as post-login destinations. */
+export function safeNext(raw: string | null): string | null {
+  return raw && raw.startsWith('/') && !raw.startsWith('//') && !raw.startsWith('/\\') ? raw : null
 }
 
 // -- types mirroring the Django serializers --------------------------------------------------------
@@ -478,4 +492,8 @@ export type Settings = {
   life_expectancy: number
 }
 
-export type User = { id: number; username: string }
+export type User = { id: number; username: string; mfa_enabled: boolean }
+export type SessionInfo = { user: User | null; mfa_setup_required: boolean }
+export type LoginResult = SessionInfo | { mfa_required: true; mfa_token: string }
+export type TwoFactorStatus = { enabled: boolean; confirmed_at: string | null; recovery_codes_left: number; required: boolean }
+export type TwoFactorSetup = { secret: string; otpauth_uri: string; qr_svg: string }

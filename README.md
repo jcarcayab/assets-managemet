@@ -47,6 +47,17 @@ are secure-only and HTTP redirects to HTTPS. The `scheduler` service refreshes p
 a daily snapshot. On a PaaS without compose, run the same image and schedule
 `python manage.py take_snapshot` daily.
 
+## Security
+
+- **Two-factor authentication** (`backend/security/`): TOTP from any authenticator app, enrolled with a QR
+  code and confirmed with a code; 10 single-use recovery codes (stored as HMACs). Login is two steps: the
+  password returns a 5-minute signed token, and only the code creates the session. Codes can't be replayed.
+- `MFA_REQUIRED=1` forces every user to enroll before using the API.
+- `/admin` honors 2FA: its password-only login form is replaced by a redirect to the app's login, and admin
+  pages refuse sessions that skipped the second factor. To reset a user who lost both phone and recovery
+  codes, delete their TOTP device in the admin (or `manage.py shell`).
+- Secrets in the database (TOTP seeds, Plaid tokens) are encrypted with `FIELD_ENCRYPTION_KEY`.
+
 ## Domain model
 
 | Model | Purpose |

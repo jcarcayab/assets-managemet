@@ -1,7 +1,9 @@
+import { useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
-import { api } from './api'
-import type { User } from './api'
+import { AUTH_CHANGED, api } from './api'
+import type { SessionInfo } from './api'
+import { TwoFactorSetup } from './components/TwoFactorSetup'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Holdings from './pages/Holdings'
@@ -41,13 +43,35 @@ export default function App() {
   const qc = useQueryClient()
   const session = useQuery({
     queryKey: ['session'],
-    queryFn: () => api<{ user: User | null }>('/auth/session/'),
+    queryFn: () => api<SessionInfo>('/auth/session/'),
     staleTime: Infinity,
   })
+
+  useEffect(() => {
+    const recheck = () => qc.invalidateQueries({ queryKey: ['session'] })
+    window.addEventListener(AUTH_CHANGED, recheck)
+    return () => window.removeEventListener(AUTH_CHANGED, recheck)
+  }, [qc])
 
   if (session.isLoading) return <div className="center muted">Cargando…</div>
   if (session.error) return <div className="center error">No se pudo conectar con el servidor.</div>
   if (!session.data?.user) return <Login onLogin={() => qc.invalidateQueries({ queryKey: ['session'] })} />
+  if (session.data.mfa_setup_required) {
+    return (
+      <div className="login">
+        <div className="card login-card wide">
+          <div className="brand">
+            <span className="logo" aria-hidden>
+              ◢
+            </span>
+            Activa la verificación en dos pasos
+          </div>
+          <p className="muted small">Es obligatoria para usar la app.</p>
+          <TwoFactorSetup onDone={() => qc.invalidateQueries()} />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="shell">
