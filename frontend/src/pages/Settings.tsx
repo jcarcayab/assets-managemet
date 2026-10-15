@@ -47,6 +47,13 @@ export default function SettingsPage({ user }: { user: User }) {
           required: true,
           help: 'Alerta si una posición o sector supera este % de tus activos',
         },
+        {
+          name: 'emergency_fund_months',
+          label: 'Fondo de emergencia objetivo (meses)',
+          type: 'number',
+          required: true,
+          help: 'Meses de gastos esenciales en efectivo',
+        },
       ],
     },
     {
@@ -97,6 +104,7 @@ export default function SettingsPage({ user }: { user: User }) {
           {card(sections[1], [
             ['Benchmark', benchmarkLabel ?? '—'],
             ['Límite de concentración', pct(s.concentration_limit_pct, 0)],
+            ['Fondo de emergencia', `${s.emergency_fund_months} meses`],
           ])}
           {card(sections[2], [
             ['Ganancias de capital', pct(s.capital_gains_tax_pct, 0)],

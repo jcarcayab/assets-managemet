@@ -6,9 +6,11 @@ from portfolio.models import (
     Account,
     AllocationTarget,
     Asset,
+    BudgetItem,
     CashFlow,
     EquityGrant,
     ExposureCategory,
+    Liability,
     Snapshot,
     Transaction,
     TransactionKind,
@@ -178,6 +180,26 @@ class EquityGrantSerializer(serializers.ModelSerializer):
         if cliff > months:
             raise serializers.ValidationError({"cliff_months": "El cliff no puede ser mayor que el vesting total."})
         return attrs
+
+
+class BudgetItemSerializer(serializers.ModelSerializer):
+    kind_label = serializers.CharField(source="get_kind_display", read_only=True)
+    monthly = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = BudgetItem
+        fields = ["id", "name", "kind", "kind_label", "category", "amount", "frequency", "monthly", "essential", "notes"]
+
+
+class LiabilitySerializer(serializers.ModelSerializer):
+    kind_label = serializers.CharField(source="get_kind_display", read_only=True)
+
+    class Meta:
+        model = Liability
+        fields = [
+            "id", "name", "kind", "kind_label", "balance", "interest_rate_pct", "minimum_payment", "updated_at", "notes",
+        ]
+        read_only_fields = ["updated_at"]
 
 
 class SnapshotSerializer(serializers.ModelSerializer):

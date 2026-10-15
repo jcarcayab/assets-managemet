@@ -1,14 +1,37 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Area, AreaChart, CartesianGrid, Legend, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { useQuery } from '@tanstack/react-query'
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { api } from '../api'
-import type { Settings } from '../api'
+import type { MonteCarlo, Settings } from '../api'
 import { useSettings, useSummary, useWrite } from '../hooks'
 import { money } from '../format'
 import { PALETTE } from '../palette'
 
 type Params = Pick<
   Settings,
-  'current_age' | 'retirement_age' | 'annual_return_pct' | 'annual_contribution' | 'withdrawal_rate_pct' | 'inflation_pct'
+  | 'current_age'
+  | 'retirement_age'
+  | 'annual_return_pct'
+  | 'annual_contribution'
+  | 'withdrawal_rate_pct'
+  | 'inflation_pct'
+  | 'expected_volatility_pct'
+  | 'employer_match_annual'
+  | 'social_security_annual'
+  | 'social_security_age'
+  | 'life_expectancy'
 >
 
 type Row = { age: number; year: number; start: number; interest: number; contribution: number; withdrawal: number; end: number; real: number }
@@ -52,7 +75,70 @@ const FIELDS: { key: keyof Params; label: string; step?: string }[] = [
   { key: 'annual_contribution', label: 'Aporte anual (USD)', step: '100' },
   { key: 'withdrawal_rate_pct', label: 'Tasa de retiro %' },
   { key: 'inflation_pct', label: 'Inflación %' },
+  { key: 'expected_volatility_pct', label: 'Volatilidad esperada % (Monte Carlo)' },
+  { key: 'employer_match_annual', label: 'Match del empleador anual (USD)', step: '100' },
+  { key: 'social_security_annual', label: 'Seguro Social anual (USD de hoy)', step: '100' },
+  { key: 'social_security_age', label: 'Edad de Seguro Social', step: '1' },
+  { key: 'life_expectancy', label: 'Planear hasta la edad', step: '1' },
 ]
+
+function MonteCarloSection({ base }: { base: string }) {
+  const mc = useQuery({ queryKey: ['monte-carlo', base], queryFn: () => api<MonteCarlo>(`/monte-carlo/?base=${base}`) })
+  const m = mc.data
+  if (mc.isLoading || !m) return <div className="card muted">Simulando…</div>
+  const data = m.bands.map((b) => ({ ...b, range: [b.p10, b.p90] }))
+  const success = m.success_probability
+  return (
+    <div className="card">
+      <h2>Monte Carlo ({m.paths.toLocaleString()} escenarios, en dólares de hoy)</h2>
+      <p className="muted small">
+        Retornos aleatorios con la volatilidad indicada.{' '}
+        {m.uses_budget
+          ? `En el retiro gasta ${money(m.annual_spending, true)}/año (tu presupuesto), ajustado por inflación y menos Seguro Social.`
+          : 'Sin presupuesto definido: retira la tasa de retiro sobre el saldo al jubilarte. Define tu Presupuesto para un cálculo más real.'}{' '}
+        Usa los supuestos guardados.
+      </p>
+      <div className="kpis">
+        <div className="card kpi">
+          <span className="kpi-label">Probabilidad de éxito</span>
+          <strong className={`kpi-value ${success >= 85 ? 'pos' : success < 70 ? 'neg' : ''}`}>{success.toFixed(0)}%</strong>
+          <span className="kpi-sub">no quedarte sin dinero · 85%+ es cómodo</span>
+        </div>
+        <div className="card kpi">
+          <span className="kpi-label">A los {m.at_retirement.age} (mediana)</span>
+          <strong className="kpi-value">{money(m.at_retirement.p50, true)}</strong>
+          <span className="kpi-sub">
+            rango {money(m.at_retirement.p10, true)} – {money(m.at_retirement.p90, true)}
+          </span>
+        </div>
+        <div className="card kpi">
+          <span className="kpi-label">Número de independencia</span>
+          <strong className="kpi-value">{money(m.fi_number, true)}</strong>
+          <span className="kpi-sub">
+            {m.fi_number === null ? 'requiere presupuesto' : m.fi_age ? `lo alcanzas ~${m.fi_age} años (mediana)` : 'no se alcanza en la mediana'}
+          </span>
+        </div>
+      </div>
+      <ResponsiveContainer width="100%" height={300}>
+        <ComposedChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" vertical={false} />
+          <XAxis dataKey="age" tick={{ fontSize: 12 }} stroke="var(--muted)" />
+          <YAxis tickFormatter={(v) => compact.format(v)} tick={{ fontSize: 12 }} stroke="var(--muted)" width={64} />
+          <Tooltip
+            formatter={(v) => (Array.isArray(v) ? `${money(Number(v[0]), true)} – ${money(Number(v[1]), true)}` : money(Number(v), true))}
+            labelFormatter={(age) => `Edad ${age}`}
+          />
+          <Legend />
+          <Area type="monotone" dataKey="range" name="10%–90% de escenarios" stroke="none" fill={PALETTE[0]} fillOpacity={0.15} />
+          <Line type="monotone" dataKey="p50" name="Mediana" stroke={PALETTE[0]} strokeWidth={2} dot={false} />
+          {m.fi_number !== null && (
+            <ReferenceLine y={m.fi_number} stroke={PALETTE[2]} strokeDasharray="4 4" label={{ value: 'Independencia', fontSize: 11, fill: 'var(--muted)' }} />
+          )}
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
 
 export default function Projection() {
   const settings = useSettings()
@@ -152,8 +238,10 @@ export default function Projection() {
         </ResponsiveContainer>
       </div>
 
+      <MonteCarloSection base={base} />
+
       <details className="card">
-        <summary>Tabla año por año</summary>
+        <summary>Tabla año por año (proyección determinista)</summary>
         <div className="table-wrap flush">
           <table>
             <thead>

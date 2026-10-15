@@ -14,6 +14,8 @@ import Accounts from './pages/Accounts'
 import Assets from './pages/Assets'
 import Equity from './pages/Equity'
 import History from './pages/History'
+import Budget from './pages/Budget'
+import Debts from './pages/Debts'
 import Projection from './pages/Projection'
 import SettingsPage from './pages/Settings'
 
@@ -28,6 +30,8 @@ const NAV = [
   { to: '/cuentas', label: 'Cuentas' },
   { to: '/activos', label: 'Activos' },
   { to: '/equity', label: 'Equity' },
+  { to: '/presupuesto', label: 'Presupuesto' },
+  { to: '/deudas', label: 'Deudas' },
   { to: '/historial', label: 'Historial' },
   { to: '/proyeccion', label: 'Proyección' },
   { to: '/ajustes', label: 'Ajustes' },
@@ -74,6 +78,8 @@ export default function App() {
           <Route path="/cuentas" element={<Accounts />} />
           <Route path="/activos" element={<Assets />} />
           <Route path="/equity" element={<Equity />} />
+          <Route path="/presupuesto" element={<Budget />} />
+          <Route path="/deudas" element={<Debts />} />
           <Route path="/historial" element={<History />} />
           <Route path="/proyeccion" element={<Projection />} />
           <Route path="/ajustes" element={<SettingsPage user={session.data.user} />} />

@@ -4,7 +4,9 @@ from portfolio.models import (
     Account,
     AllocationTarget,
     Asset,
+    BudgetItem,
     CashFlow,
+    Liability,
     EquityGrant,
     Snapshot,
     Transaction,
@@ -32,6 +34,8 @@ class TransactionAdmin(admin.ModelAdmin):
     date_hierarchy = "date"
 
 
+admin.site.register(BudgetItem)
+admin.site.register(Liability)
 admin.site.register(CashFlow)
 admin.site.register(AllocationTarget)
 admin.site.register(EquityGrant)
