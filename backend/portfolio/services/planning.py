@@ -28,7 +28,7 @@ HUNDRED = Decimal(100)
 # -- budget ----------------------------------------------------------------------------------------
 
 
-def compute_budget(user) -> dict:
+def compute_budget(user, positions=None) -> dict:
     s = UserSettings.for_user(user)
     items = list(BudgetItem.objects.filter(owner=user))
     income = sum((i.monthly for i in items if i.kind == BudgetKind.INCOME), ZERO)
@@ -42,10 +42,8 @@ def compute_budget(user) -> dict:
             by_category[key] = by_category.get(key, ZERO) + i.monthly
 
     # Emergency fund = cash in accessible accounts (not investments that can fall exactly when you need them).
-    cash = sum(
-        (p.market_value for p in compute_positions(user) if p.asset_class == AssetClass.CASH and p.account.is_liquid),
-        ZERO,
-    )
+    positions = compute_positions(user) if positions is None else positions
+    cash = sum((p.market_value for p in positions if p.asset_class == AssetClass.CASH and p.account.is_liquid), ZERO)
     target = essential * s.emergency_fund_months
     return {
         "monthly_income": income,
@@ -259,11 +257,11 @@ def class_assumptions(s: UserSettings) -> dict[str, tuple[float, float]]:
     return out
 
 
-def portfolio_assumptions(user, base: str, s: UserSettings) -> dict:
+def portfolio_assumptions(user, base: str, s: UserSettings, positions=None) -> dict:
     """Expected return and volatility of what `base` holds today, from per-class assumptions and correlations."""
     weights: dict[str, float] = {}
     deferred = total = 0.0
-    for p in compute_positions(user):
+    for p in compute_positions(user) if positions is None else positions:
         value = float(p.market_value)
         if value <= 0 or p.asset_class == AssetClass.DEBT:
             continue
@@ -308,9 +306,10 @@ def monte_carlo(user, base: str = "net_worth_ex_private", paths: int = 2000, see
     spent pays retirement tax and is reinvested."""
     s = UserSettings.for_user(user)
     base = base if base in BASES else "net_worth_ex_private"
-    start = float(compute_summary(user)[base])
-    budget = compute_budget(user)
-    mix = portfolio_assumptions(user, base, s)
+    positions = compute_positions(user)  # replaying the ledger is the slow part: do it once
+    start = float(compute_summary(user, positions)[base])
+    budget = compute_budget(user, positions)
+    mix = portfolio_assumptions(user, base, s, positions)
 
     if s.projection_by_asset_class and mix["by_class"]:
         mu, sigma = mix["return_pct"] / 100, mix["volatility_pct"] / 100
