@@ -8,15 +8,19 @@ Private equity and debt are excluded (no daily prices / not investments).
 
 import bisect
 import datetime as dt
+import threading
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
 
+from django.db import connection
+from django.db.models import Count, Max
 from django.utils import timezone
 
-from portfolio.models import AssetClass, Transaction, TransactionKind, UserSettings
+from portfolio.models import Asset, AssetClass, PriceHistory, Transaction, TransactionKind, UserSettings
 from portfolio.services.history import BENCHMARKS, load_history
-from portfolio.services.positions import Ledger, ledger_transactions
+from portfolio.services.positions import Ledger, ledger_transactions, ledger_version
 
 ZERO = Decimal(0)
 MAX_POINTS = 400
@@ -51,7 +55,7 @@ class PriceBook:
         return prices[0] if prices else ZERO  # before the first known price: use the earliest one
 
 
-@dataclass
+@dataclass(frozen=True)  # shared through the cache: never mutated
 class Day:
     date: dt.date
     value: Decimal
@@ -74,8 +78,45 @@ def _flow(tx: Transaction, account_id: int | None, ledger: Ledger) -> Decimal:
     return ZERO
 
 
+# -- cached daily series ---------------------------------------------------------------------------
+# Re-valuing every day of the history takes seconds with tens of thousands of trades, and the Performance
+# and Risk pages both need it. The series only changes with the ledger, the stored price history, the
+# assets' current prices / tickers, or the date, so it's cached per (user, scope) on all of those.
+
+SERIES_TTL_SECONDS = 3600
+_series_cache: dict[tuple[int, int | None], tuple[tuple, float, list[Day]]] = {}
+_series_lock = threading.Lock()
+
+
+def _series_key(user) -> tuple:
+    assets = Asset.objects.filter(owner=user).order_by("id").values_list(
+        "id", "symbol", "asset_class", "price_source", "source_id", "last_price", "manual_price"
+    )
+    prices = PriceHistory.objects.aggregate(n=Count("id"), last=Max("date"))
+    return ledger_version(user), hash(tuple(assets)), prices["n"], prices["last"], timezone.localdate()
+
+
+def clear_series_cache() -> None:
+    with _series_lock:
+        _series_cache.clear()
+
+
 def daily_series(user, account_id: int | None = None) -> list[Day]:
-    """One Day per calendar day from the scope's first transaction until today."""
+    """One Day per calendar day from the scope's first transaction until today (cached; see above)."""
+    if connection.in_atomic_block:
+        return _daily_series(user, account_id)
+    key = _series_key(user)
+    with _series_lock:
+        hit = _series_cache.get((user.pk, account_id))
+    if hit and hit[0] == key and time.monotonic() - hit[1] < SERIES_TTL_SECONDS:
+        return list(hit[2])
+    days = _daily_series(user, account_id)
+    with _series_lock:
+        _series_cache[(user.pk, account_id)] = (key, time.monotonic(), days)
+    return list(days)
+
+
+def _daily_series(user, account_id: int | None = None) -> list[Day]:
     txs = [
         tx for tx in ledger_transactions(user)
         if tx.asset.asset_class not in (AssetClass.DEBT, AssetClass.PRIVATE_EQUITY)
