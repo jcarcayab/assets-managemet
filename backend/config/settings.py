@@ -100,6 +100,8 @@ STORAGES = {
 # unknown non-API paths fall back to its index.html (see config/urls.py).
 FRONTEND_DIST = Path(os.environ.get("FRONTEND_DIST", REPO_DIR / "frontend" / "dist"))
 WHITENOISE_ROOT = FRONTEND_DIST if FRONTEND_DIST.exists() else None
+# The PWA manifest; without it the OS mimetypes table may serve it as octet-stream (rejected under nosniff).
+WHITENOISE_MIMETYPES = {".webmanifest": "application/manifest+json"}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
