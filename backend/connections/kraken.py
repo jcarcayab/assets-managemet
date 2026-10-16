@@ -7,6 +7,7 @@ import base64
 import datetime as dt
 import hashlib
 import hmac
+import re
 import time
 import urllib.parse
 from decimal import Decimal
@@ -29,11 +30,18 @@ ALIASES = {
     "XBT": "BTC", "XXBT": "BTC", "XDG": "DOGE", "XXDG": "DOGE", "XETH": "ETH", "XXRP": "XRP", "XLTC": "LTC",
     "XXLM": "XLM", "XZEC": "ZEC", "XXMR": "XMR", "XETC": "ETC", "XMLN": "MLN", "XREP": "REP",
     "ZUSD": "USD", "ZEUR": "EUR", "ZGBP": "GBP", "ZCAD": "CAD", "ZJPY": "JPY", "ZAUD": "AUD",
+    "ETH2": "ETH",  # staked ETH
 }
+# Staking with a lock period adds it in days to the code: SOL03, DOT28, KSM07, FLOW14…
+LOCKED_STAKING = re.compile(r"^([A-Z]{2,})\d{2}$")
 
 
 def kraken_symbol(code: str) -> str:
     base = code.split(".")[0].upper()
+    if base in ALIASES:
+        return ALIASES[base]
+    if locked := LOCKED_STAKING.match(base):
+        base = locked.group(1)
     return ALIASES.get(base, base)
 
 

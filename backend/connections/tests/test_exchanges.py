@@ -31,7 +31,11 @@ def test_kraken_signature_matches_the_documented_example():
 
 
 @pytest.mark.parametrize(
-    "code, symbol", [("XXBT", "BTC"), ("SOL.S", "SOL"), ("ZUSD", "USD"), ("XETH.F", "ETH"), ("USDC", "USDC")]
+    "code, symbol",
+    [
+        ("XXBT", "BTC"), ("SOL.S", "SOL"), ("ZUSD", "USD"), ("XETH.F", "ETH"), ("USDC", "USDC"), ("SOL03.S", "SOL"),
+        ("SOL03", "SOL"), ("DOT28.S", "DOT"), ("FLOW14.S", "FLOW"), ("ETH2.S", "ETH"), ("C98", "C98"), ("API3", "API3"),
+    ],
 )
 def test_kraken_asset_codes(code, symbol):
     assert kraken_symbol(code) == symbol
