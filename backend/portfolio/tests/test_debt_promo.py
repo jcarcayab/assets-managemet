@@ -71,3 +71,13 @@ def test_promo_rate_and_end_date_go_together(api):
     assert api.post("/api/liabilities/", body, format="json").status_code == 400
     body["promo_end_date"] = "2026-12-31"
     assert api.post("/api/liabilities/", body, format="json").status_code == 201
+
+
+def test_alert_when_the_payment_doesnt_cover_interest(user):
+    Liability.objects.create(owner=user, name="Card", kind="credit_card", balance=1943, interest_rate_pct=D("28.24"),
+                             minimum_payment=25)
+    Liability.objects.create(owner=user, name="Fine", kind="credit_card", balance=1000, interest_rate_pct=24,
+                             minimum_payment=100)
+    [alert] = compute_debts(user)["alerts"]
+    assert alert["name"] == "Card" and alert["level"] == "critical"
+    assert "no cubre los intereses (~$45.73/mes" in alert["message"] and "~$187" in alert["message"]
