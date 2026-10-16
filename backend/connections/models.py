@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.db import models
 
-from portfolio.models import MONEY, Account
+from portfolio.models import MONEY, Account, Liability
 from security.crypto import decrypt, encrypt
 
 
@@ -88,6 +88,10 @@ class PlaidAccount(models.Model):
     account = models.ForeignKey(
         Account, on_delete=models.SET_NULL, null=True, blank=True, related_name="plaid_links",
         help_text="Cuenta del portafolio que refleja esta cuenta. Vacía = se crea una al sincronizar.",
+    )
+    liability = models.ForeignKey(
+        Liability, on_delete=models.SET_NULL, null=True, blank=True, related_name="plaid_links",
+        help_text="Deuda que refleja esta tarjeta o préstamo. Vacía = se crea una al sincronizar.",
     )
     enabled = models.BooleanField(default=True)
     current_balance = models.DecimalField(**MONEY, null=True, blank=True)

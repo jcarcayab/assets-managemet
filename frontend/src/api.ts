@@ -515,6 +515,8 @@ export type PlaidAccount = {
   current_balance: number | null
   account: number | null
   account_name: string | null
+  liability: number | null
+  liability_name: string | null
   enabled: boolean
 }
 export type PlaidItem = {
@@ -532,6 +534,7 @@ export type SyncReport = {
   cash_flows: number
   adjustments: number
   skipped: number
+  liabilities: number
   error: { code: string; message: string; needs_reauth: boolean } | null
 }
 
