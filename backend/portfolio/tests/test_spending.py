@@ -52,15 +52,22 @@ def test_spending_vs_budget(user, card):
     for id_, day, amount, cat, det, merchant in rows:
         BankTransaction.objects.create(owner=user, plaid_account=card, transaction_id=id_, date=dt.date.fromisoformat(day),
                                        amount=amount, category=cat, detailed_category=det, merchant=merchant)
+    bank = PlaidAccount.objects.create(item=card.item, plaid_account_id="b1", name="Checking", type="depository")
+    BankTransaction.objects.create(owner=user, plaid_account=card, transaction_id="t8", date=dt.date(2026, 10, 10),
+                                   amount=-1500, category="LOAN_DISBURSEMENTS")  # how Chase labels a card payment
+    BankTransaction.objects.create(owner=user, plaid_account=bank, transaction_id="t9", date=dt.date(2026, 10, 11),
+                                   amount=-140, category="OTHER")  # money received in the bank: not a refund
+    BankTransaction.objects.create(owner=user, plaid_account=bank, transaction_id="t10", date=dt.date(2026, 10, 12),
+                                   amount=30, category="FOOD_AND_DRINK", merchant="Publix")  # debit card purchase
     data = compute_spending(user, dt.date(2026, 10, 1))
-    assert data["spent"] == 175  # 120 − 20 + 60 + 15: no card payment, no transfer
+    assert data["spent"] == 205  # 120 − 20 + 60 + 15 + 30: no card payment, transfer, disbursement or inflow
     assert (data["budget"], data["unmapped_budget"]) == (500, 40)
     food = next(r for r in data["categories"] if r["category"] == "FOOD_AND_DRINK")
-    assert (food["spent"], food["budget"], food["remaining"], food["avg_3m"]) == (100, 500, 400, 30)
+    assert (food["spent"], food["budget"], food["remaining"], food["avg_3m"]) == (130, 500, 370, 30)
     assert next(r for r in data["categories"] if r["category"] == "OTHER")["spent"] == 15
-    assert data["top_merchants"][0] == {"name": "Publix", "spent": D(100)}
-    assert [h["spent"] for h in data["history"]][-2:] == [90, 175]
-    assert data["sources"] == [{"account": "Robinhood · Card", "importing": True}]
+    assert data["top_merchants"][0] == {"name": "Publix", "spent": D(130)}
+    assert [h["spent"] for h in data["history"]][-2:] == [90, 205]
+    assert {"account": "Robinhood · Card", "importing": True} in data["sources"]
 
 
 def test_spending_endpoint(api):

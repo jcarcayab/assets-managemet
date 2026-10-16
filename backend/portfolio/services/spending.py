@@ -1,7 +1,9 @@
 """Real spending (card and bank movements from Plaid Transactions) against the budget, month by month.
 
-Counts purchases minus refunds. Money moving between your own accounts, income and credit-card payments are
-left out (a card payment would count the same purchases twice).
+Counts purchases minus card refunds. Money moving between your own accounts, income, credit-card payments and
+loan disbursements are left out (a card payment would count the same purchases twice; some banks, like Chase,
+label card payments as disbursements). On bank accounts only money going out counts: money coming in there is
+income or a transfer, not a refund.
 """
 
 import calendar
@@ -14,7 +16,7 @@ from django.utils import timezone
 from portfolio.models import BudgetItem, BudgetKind, SpendingCategory
 
 ZERO = Decimal(0)
-NOT_SPENDING = {"TRANSFER_IN", "TRANSFER_OUT", "INCOME"}
+NOT_SPENDING = {"TRANSFER_IN", "TRANSFER_OUT", "INCOME", "LOAN_DISBURSEMENTS"}
 CARD_PAYMENT = "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT"
 TRACKED_MONTHS = 6
 TOP_MERCHANTS = 10
@@ -40,6 +42,7 @@ def compute_spending(user, month: dt.date | None = None) -> dict:
         BankTransaction.objects.filter(owner=user, date__gte=first, date__lt=end)
         .exclude(category__in=NOT_SPENDING)
         .exclude(detailed_category=CARD_PAYMENT)
+        .exclude(plaid_account__type="depository", amount__lt=0)
         .select_related("plaid_account")
     )
 
