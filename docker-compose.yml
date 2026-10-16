@@ -20,7 +20,7 @@ services:
     command: >
       sh -c 'sleep 60; while true; do
         python manage.py refresh_prices;
-        if [ "$$(date -u +%H)" = "21" ]; then python manage.py plaid_sync; python manage.py take_snapshot --no-refresh; fi;
+        if [ "$$(date -u +%H)" = "21" ]; then python manage.py plaid_sync; python manage.py exchange_sync; python manage.py take_snapshot --no-refresh; fi;
         sleep 3600;
       done'
     depends_on:

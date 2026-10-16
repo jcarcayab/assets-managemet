@@ -1,0 +1,127 @@
+"""Kraken REST API, read-only (https://docs.kraken.com/api/).
+
+Needs an API key with only: Query Funds, Query Closed Orders & Trades, Query Ledger Entries.
+"""
+
+import base64
+import datetime as dt
+import hashlib
+import hmac
+import time
+import urllib.parse
+from decimal import Decimal
+
+import requests
+
+from connections.exchange_data import CASH_SYMBOLS, CashMove, ExchangeError, Reward, Snapshot, Trade
+
+API = "https://api.kraken.com"
+
+# Kraken's legacy asset codes. Suffixes like ".S" (staked) or ".F" (earn) are stripped first.
+ALIASES = {
+    "XBT": "BTC", "XXBT": "BTC", "XDG": "DOGE", "XXDG": "DOGE", "XETH": "ETH", "XXRP": "XRP", "XLTC": "LTC",
+    "XXLM": "XLM", "XZEC": "ZEC", "XXMR": "XMR", "XETC": "ETC", "XMLN": "MLN", "XREP": "REP",
+    "ZUSD": "USD", "ZEUR": "EUR", "ZGBP": "GBP", "ZCAD": "CAD", "ZJPY": "JPY", "ZAUD": "AUD",
+}
+
+
+def kraken_symbol(code: str) -> str:
+    base = code.split(".")[0].upper()
+    return ALIASES.get(base, base)
+
+
+def sign(path: str, nonce: str, postdata: str, secret: str) -> str:
+    """API-Sign = base64(HMAC-SHA512(base64decode(secret), path + SHA256(nonce + postdata)))."""
+    digest = hashlib.sha256((nonce + postdata).encode()).digest()
+    mac = hmac.new(base64.b64decode(secret), path.encode() + digest, hashlib.sha512)
+    return base64.b64encode(mac.digest()).decode()
+
+
+def _date(ts) -> dt.date:
+    return dt.datetime.fromtimestamp(float(ts), tz=dt.UTC).date()
+
+
+class KrakenClient:
+    def __init__(self, api_key: str, api_secret: str):
+        self.api_key = api_key.strip()
+        self.api_secret = api_secret.strip()
+        self._last_nonce = 0
+
+    def _nonce(self) -> str:
+        self._last_nonce = max(int(time.time() * 1000), self._last_nonce + 1)  # must strictly increase
+        return str(self._last_nonce)
+
+    @staticmethod
+    def _result(resp) -> dict:
+        try:
+            data = resp.json()
+        except ValueError:
+            raise ExchangeError(f"Kraken HTTP {resp.status_code}") from None
+        if data.get("error"):
+            raise ExchangeError("Kraken: " + ", ".join(data["error"]))
+        return data["result"]
+
+    def private(self, method: str, data: dict | None = None) -> dict:
+        path = f"/0/private/{method}"
+        body = {"nonce": self._nonce(), **(data or {})}
+        postdata = urllib.parse.urlencode(body)
+        headers = {
+            "API-Key": self.api_key,
+            "API-Sign": sign(path, body["nonce"], postdata, self.api_secret),
+            "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        }
+        return self._result(requests.post(API + path, data=postdata, headers=headers, timeout=30))
+
+    def public(self, method: str) -> dict:
+        return self._result(requests.get(f"{API}/0/public/{method}", timeout=30))
+
+    def _paged(self, method: str, key: str) -> dict:
+        rows, offset = {}, 0
+        while True:
+            result = self.private(method, {"ofs": offset})
+            page = result.get(key, {})
+            rows.update(page)
+            offset += len(page)
+            if not page or offset >= int(result.get("count", 0)):
+                return rows
+
+    def check(self) -> None:
+        """Fails unless the key can read balances, trades and ledger entries."""
+        self.private("Balance")
+        self.private("TradesHistory", {"ofs": 0})
+        self.private("Ledgers", {"ofs": 0})
+
+    def snapshot(self) -> Snapshot:
+        snap = Snapshot()
+        for code, amount in self.private("Balance").items():
+            if Decimal(amount):
+                snap.add_balance(kraken_symbol(code), Decimal(amount))
+
+        pairs = {}
+        for name, info in self.public("AssetPairs").items():
+            pair = (kraken_symbol(info["base"]), kraken_symbol(info["quote"]))
+            pairs[name] = pairs[info.get("altname", name)] = pair
+
+        for txid, t in self._paged("TradesHistory", "trades").items():
+            base, quote = pairs.get(t["pair"], (None, None))
+            if base is None or quote not in CASH_SYMBOLS:
+                snap.skipped += 1  # crypto/crypto or non-USD pair: reconciliation covers the balances
+                continue
+            snap.trades.append(
+                Trade(
+                    ext_id=f"kraken:{txid}", date=_date(t["time"]), symbol=base, side=t["type"],
+                    quantity=Decimal(t["vol"]), price=Decimal(t["price"]), fee=Decimal(t.get("fee", "0")),
+                )
+            )
+
+        for lid, entry in self._paged("Ledgers", "ledger").items():
+            symbol, amount = kraken_symbol(entry["asset"]), Decimal(entry["amount"])
+            kind, subtype = entry.get("type", ""), entry.get("subtype", "")
+            if kind in ("deposit", "withdrawal") and symbol in CASH_SYMBOLS:
+                snap.cash_moves.append(CashMove(f"kraken:{lid}", _date(entry["time"]), abs(amount), kind))
+            elif amount > 0 and (kind == "staking" or (kind == "earn" and subtype == "reward")):
+                received = amount - Decimal(entry.get("fee", "0"))
+                snap.rewards.append(Reward(f"kraken:{lid}", _date(entry["time"]), symbol, received))
+            elif kind not in ("trade", "transfer", "earn", "spend", "receive"):
+                snap.skipped += 1  # crypto deposits/withdrawals etc.: covered by reconciliation
+        return snap

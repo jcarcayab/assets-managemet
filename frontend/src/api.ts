@@ -523,6 +523,27 @@ export type SyncReport = {
   error: { code: string; message: string; needs_reauth: boolean } | null
 }
 
+export type ExchangeConnection = {
+  id: number
+  provider: 'coinbase' | 'kraken'
+  provider_label: string
+  label: string
+  key_hint: string
+  account: number | null
+  account_name: string | null
+  created_at: string
+  last_synced_at: string | null
+  last_error: string
+}
+export type ExchangeReport = {
+  trades: number
+  rewards: number
+  cash_flows: number
+  adjustments: number
+  skipped: number
+  error: string | null
+}
+
 export type User = { id: number; username: string; mfa_enabled: boolean }
 export type SessionInfo = { user: User | null; mfa_setup_required: boolean }
 export type LoginResult = SessionInfo | { mfa_required: true; mfa_token: string }

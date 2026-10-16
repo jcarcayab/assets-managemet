@@ -19,6 +19,7 @@ from django.utils import timezone
 
 from connections.models import PlaidAccount, PlaidItem
 from connections.plaid import PlaidClient, PlaidError, get_client
+from connections.reconcile import Target, reconcile_account
 from portfolio.models import (
     Account,
     AccountType,
@@ -32,11 +33,10 @@ from portfolio.models import (
     TransactionKind,
 )
 from portfolio.services.excel_import import COINGECKO_IDS
-from portfolio.services.positions import cash_asset, compute_positions
+from portfolio.services.positions import cash_asset
 
 HISTORY_DAYS = 730  # Plaid's investment history limit (24 months)
 OVERLAP_DAYS = 30  # re-read recent days on each sync to catch late-posted transactions
-EPS = Decimal("0.000001")
 TX_PREFIX = "plaid:"
 ADJ_PREFIX = "plaid-adj:"
 
@@ -226,42 +226,18 @@ def apply_transaction(t: dict, account: Account, securities: dict) -> str | None
 # -- reconciliation --------------------------------------------------------------------------------
 
 
-def _ledger_positions(account: Account) -> dict:
-    return {
-        p.asset.id: p
-        for p in compute_positions(account.owner, include_closed=True)
-        if p.account.id == account.id and p.asset is not None
-    }
-
-
-def _net_units(account: Account, asset: Asset) -> Decimal:
-    """Units the recorded history adds to this account (ignoring splits): buys − sells ± transfers."""
-    net = Decimal(0)
-    history = Transaction.objects.filter(account=account, asset=asset).exclude(external_id__startswith=ADJ_PREFIX)
-    for kind, qty in history.values_list("kind", "quantity"):
-        if kind in (TransactionKind.BUY, TransactionKind.STAKING):
-            net += qty
-        elif kind in (TransactionKind.SELL, TransactionKind.TRANSFER):
-            net -= qty
-    transfers_in = Transaction.objects.filter(to_account=account, asset=asset, kind=TransactionKind.TRANSFER)
-    return net + sum(transfers_in.values_list("quantity", flat=True), Decimal(0))
-
-
 def reconcile(account: Account, holdings: list[dict], securities: dict, cash_balance: Decimal | None = None) -> int:
-    """Make the ledger's quantities in `account` equal to what the institution reports."""
+    """Make the ledger's quantities in `account` equal to the holdings Plaid reports."""
     owner = account.owner
-    Transaction.objects.filter(account=account, external_id__startswith=ADJ_PREFIX).delete()
-
-    # asset_id -> [asset, quantity, broker cost basis (total) or None, price]
-    targets: dict[int, list] = {}
+    targets: dict[int, Target] = {}
     for h in holdings:
         asset = asset_for_security(owner, securities.get(h.get("security_id")))
         is_cash = asset.asset_class == AssetClass.CASH
         price = _d(h.get("institution_price")) or (Decimal(1) if is_cash else Decimal(0))
-        row = targets.setdefault(asset.id, [asset, Decimal(0), None, price])
-        row[1] += _d(h.get("quantity"))
+        target = targets.setdefault(asset.id, Target(asset, price=price))
+        target.quantity += _d(h.get("quantity"))
         if h.get("cost_basis") is not None:
-            row[2] = (row[2] or Decimal(0)) + _d(h["cost_basis"])
+            target.cost = (target.cost or Decimal(0)) + _d(h["cost_basis"])
         if asset.price_source == PriceSource.MANUAL and not is_cash and price:
             asset.manual_price = price
             asset.save(update_fields=["manual_price"])
@@ -269,52 +245,7 @@ def reconcile(account: Account, holdings: list[dict], securities: dict, cash_bal
             # Live-priced asset not quoted yet (or unknown to Yahoo): use the institution's price until it is.
             asset.last_price = price
             asset.save(update_fields=["last_price"])
-    if cash_balance is not None:
-        cash = cash_asset(owner)
-        targets.setdefault(cash.id, [cash, Decimal(0), None, Decimal(1)])[1] += cash_balance
-    for asset_id, p in _ledger_positions(account).items():
-        targets.setdefault(asset_id, [p.asset, Decimal(0), None, p.price])  # held here before, gone now
-
-    today = timezone.localdate()
-    first_date = (
-        Transaction.objects.filter(account=account)
-        .exclude(external_id__startswith=ADJ_PREFIX)
-        .order_by("date")
-        .values_list("date", flat=True)
-        .first()
-    )
-    created = 0
-
-    # 1) Opening balance for the units the available history doesn't explain.
-    for asset, qty, cost, price in targets.values():
-        if asset.asset_class == AssetClass.CASH:
-            continue
-        opening = qty - _net_units(account, asset)
-        if opening > EPS:
-            unit = cost / qty if cost is not None and qty else price
-            Transaction.objects.create(
-                account=account, asset=asset, kind=TransactionKind.BUY,
-                date=(first_date - dt.timedelta(days=1)) if first_date else today,
-                quantity=opening, price=max(unit, Decimal(0)), external_id=f"{ADJ_PREFIX}open:{asset.id}",
-                notes="Saldo anterior al historial disponible en Plaid (costo promedio del broker).",
-            )
-            created += 1
-
-    # 2) Whatever still differs (cash, splits, transfers without detail) is fixed as of today.
-    current = _ledger_positions(account)
-    for asset, qty, _cost, price in targets.values():
-        have = current[asset.id].quantity if asset.id in current else Decimal(0)
-        diff = qty - have
-        if abs(diff) <= EPS:
-            continue
-        fallback = current[asset.id].avg_cost if asset.id in current else Decimal(0)
-        Transaction.objects.create(
-            account=account, asset=asset, kind=TransactionKind.BUY if diff > 0 else TransactionKind.SELL,
-            date=today, quantity=abs(diff), price=price or fallback, external_id=f"{ADJ_PREFIX}fix:{asset.id}",
-            notes="Ajuste de conciliación con Plaid (cuadra con lo que reporta la institución).",
-        )
-        created += 1
-    return created
+    return reconcile_account(account, targets, prefix=ADJ_PREFIX, source="Plaid", cash_balance=cash_balance)
 
 
 # -- sync ------------------------------------------------------------------------------------------

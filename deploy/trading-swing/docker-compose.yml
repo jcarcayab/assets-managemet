@@ -25,7 +25,7 @@ services:
       - "127.0.0.1:8090:8000" # only Caddy (host network) talks to it
     mem_limit: 450m
 
-  # Hourly prices; once a day after 21:00 UTC: Plaid sync + net-worth snapshot.
+  # Hourly prices; once a day after 21:00 UTC: Plaid + exchange sync, then the net-worth snapshot.
   # Idle it's just a sleeping shell; Python only runs while a job does.
   scheduler:
     <<: *app
@@ -38,7 +38,7 @@ services:
         python manage.py refresh_prices;
         day=$$(date -u +%F);
         if [ "$$(date -u +%H)" -ge 21 ] && [ ! -e /data/.daily-$$day ]; then
-          python manage.py plaid_sync; python manage.py take_snapshot --no-refresh; touch /data/.daily-$$day;
+          python manage.py plaid_sync; python manage.py exchange_sync; python manage.py take_snapshot --no-refresh; touch /data/.daily-$$day;
           find /data -maxdepth 1 -name ".daily-*" -mtime +7 -delete;
         fi;
         sleep 3600;

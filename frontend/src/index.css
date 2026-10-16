@@ -861,3 +861,7 @@ button:focus-visible {
     padding-bottom: max(1.1rem, env(safe-area-inset-bottom));
   }
 }
+
+.key-help p {
+  margin: 0.4rem 0 0;
+}
