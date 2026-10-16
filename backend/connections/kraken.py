@@ -17,6 +17,13 @@ from connections.exchange_data import CASH_SYMBOLS, CashMove, ExchangeError, Rew
 
 API = "https://api.kraken.com"
 
+# Private calls share a counter (https://docs.kraken.com/api/docs/guides/spot-rest-ratelimits): history queries
+# add 2, the rest 1, and it decays 0.33/s up to a max of 15 on the Starter tier. Higher tiers allow more, so
+# pacing for Starter is safe for everyone; a long first history just takes a few minutes.
+RATE_MAX, RATE_DECAY = 15, 0.33
+HEAVY_METHODS = {"TradesHistory", "Ledgers", "QueryLedgers", "ClosedOrders", "QueryTrades"}
+RATE_RETRIES = 5
+
 # Kraken's legacy asset codes. Suffixes like ".S" (staked) or ".F" (earn) are stripped first.
 ALIASES = {
     "XBT": "BTC", "XXBT": "BTC", "XDG": "DOGE", "XXDG": "DOGE", "XETH": "ETH", "XXRP": "XRP", "XLTC": "LTC",
@@ -46,6 +53,7 @@ class KrakenClient:
         self.api_key = api_key.strip()
         self.api_secret = api_secret.strip()
         self._last_nonce = 0
+        self._counter, self._counter_at = 0.0, time.monotonic()
 
     def _nonce(self) -> str:
         self._last_nonce = max(int(time.time() * 1000), self._last_nonce + 1)  # must strictly increase
@@ -61,7 +69,32 @@ class KrakenClient:
             raise ExchangeError("Kraken: " + ", ".join(data["error"]))
         return data["result"]
 
+    def _throttle(self, method: str) -> None:
+        """Wait until this call fits in Kraken's counter (as we track it), then count it."""
+        cost = 2 if method in HEAVY_METHODS else 1
+        now = time.monotonic()
+        self._counter = max(0.0, self._counter - (now - self._counter_at) * RATE_DECAY)
+        wait = (self._counter + cost - RATE_MAX) / RATE_DECAY
+        if wait > 0:
+            time.sleep(wait)
+            self._counter = RATE_MAX - cost
+        self._counter += cost
+        self._counter_at = time.monotonic()
+
     def private(self, method: str, data: dict | None = None) -> dict:
+        for attempt in range(RATE_RETRIES + 1):
+            self._throttle(method)
+            try:
+                return self._private(method, data)
+            except ExchangeError as exc:
+                if "Rate limit" not in str(exc) or attempt == RATE_RETRIES:
+                    raise
+                # Kraken's counter is higher than ours (an earlier sync, another app on the key): let it drain.
+                self._counter, self._counter_at = RATE_MAX, time.monotonic()
+                time.sleep(10 * (attempt + 1))
+        raise AssertionError("unreachable")
+
+    def _private(self, method: str, data: dict | None = None) -> dict:
         path = f"/0/private/{method}"
         body = {"nonce": self._nonce(), **(data or {})}
         postdata = urllib.parse.urlencode(body)
