@@ -25,6 +25,7 @@ from portfolio.models import (
     LiabilityKind,
     PriceSource,
     Snapshot,
+    SpendingCategory,
     TaxTreatment,
     Transaction,
     TransactionKind,
@@ -261,6 +262,22 @@ def savings_plan_view(request):
 
 
 @api_view(["GET"])
+def spending_view(request):
+    """Real spending vs budget for ?month=YYYY-MM (default: this month)."""
+    import datetime as dt
+
+    from portfolio.services.spending import compute_spending
+
+    month = None
+    if raw := request.query_params.get("month"):
+        try:
+            month = dt.datetime.strptime(raw, "%Y-%m").date()
+        except ValueError:
+            return Response({"detail": "Mes inválido (AAAA-MM)."}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(compute_spending(request.user, month))
+
+
+@api_view(["GET"])
 def contribution_limits_view(request):
     return Response(contribution_limits(request.user))
 
@@ -328,6 +345,7 @@ def choices_view(request):
             "budget_kinds": as_list(BudgetKind),
             "frequencies": as_list(Frequency),
             "liability_kinds": as_list(LiabilityKind),
+            "spending_categories": as_list(SpendingCategory),
             "benchmarks": [{"value": k, "label": v} for k, v in BENCHMARKS.items()],
         }
     )

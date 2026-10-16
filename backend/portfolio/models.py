@@ -482,6 +482,25 @@ class Frequency(models.TextChoices):
     ANNUAL = "annual", "Anual"
 
 
+class SpendingCategory(models.TextChoices):
+    """Plaid's personal-finance categories (primary level) that count as spending."""
+
+    FOOD_AND_DRINK = "FOOD_AND_DRINK", "Comida y bebida"
+    GENERAL_MERCHANDISE = "GENERAL_MERCHANDISE", "Compras"
+    RENT_AND_UTILITIES = "RENT_AND_UTILITIES", "Vivienda y servicios"
+    TRANSPORTATION = "TRANSPORTATION", "Transporte"
+    TRAVEL = "TRAVEL", "Viajes"
+    ENTERTAINMENT = "ENTERTAINMENT", "Entretenimiento"
+    GENERAL_SERVICES = "GENERAL_SERVICES", "Servicios y suscripciones"
+    PERSONAL_CARE = "PERSONAL_CARE", "Cuidado personal"
+    MEDICAL = "MEDICAL", "Salud"
+    HOME_IMPROVEMENT = "HOME_IMPROVEMENT", "Hogar"
+    LOAN_PAYMENTS = "LOAN_PAYMENTS", "Pagos de préstamos"
+    GOVERNMENT_AND_NON_PROFIT = "GOVERNMENT_AND_NON_PROFIT", "Gobierno y donaciones"
+    BANK_FEES = "BANK_FEES", "Comisiones bancarias"
+    OTHER = "OTHER", "Otros"
+
+
 class BudgetItem(models.Model):
     """A recurring income or expense line of the household budget (net, after taxes for income)."""
 
@@ -489,6 +508,10 @@ class BudgetItem(models.Model):
     name = models.CharField(max_length=100)
     kind = models.CharField(max_length=10, choices=BudgetKind.choices, default=BudgetKind.EXPENSE)
     category = models.CharField(max_length=60, blank=True)
+    spending_category = models.CharField(
+        max_length=30, choices=SpendingCategory.choices, blank=True,
+        help_text="Categoría de los movimientos de tus tarjetas con la que se compara este gasto.",
+    )
     amount = models.DecimalField(**MONEY, validators=[MinValueValidator(Decimal(0))])
     frequency = models.CharField(max_length=10, choices=Frequency.choices, default=Frequency.MONTHLY)
     essential = models.BooleanField(default=True, help_text="Gasto que seguirías pagando sin ingresos (fondo de emergencia).")
