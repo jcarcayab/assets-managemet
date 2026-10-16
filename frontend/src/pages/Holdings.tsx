@@ -27,7 +27,6 @@ export default function Holdings() {
 
   const byAccount = new Map<string, Position[]>()
   for (const p of positions.data ?? []) byAccount.set(p.account_name, [...(byAccount.get(p.account_name) ?? []), p])
-  const crypto = (positions.data ?? []).filter((p) => p.extra.tp1_price !== undefined)
 
   return (
     <section>
@@ -112,39 +111,6 @@ export default function Holdings() {
           </div>
         )
       })}
-
-      {crypto.length > 0 && (
-        <div className="card">
-          <h2>Niveles crypto (take profit / stop loss)</h2>
-          <div className="table-wrap flush">
-            <table>
-              <thead>
-                <tr>
-                  <th>Activo</th>
-                  <th className="num">Entrada prom.</th>
-                  <th className="num">Actual</th>
-                  <th className="num">TP1</th>
-                  <th className="num">TP2</th>
-                  <th className="num">Stop loss</th>
-                </tr>
-              </thead>
-              <tbody>
-                {crypto.map((p) => (
-                  <tr key={p.symbol}>
-                    <td>{p.symbol}</td>
-                    <td className="num">{money(p.avg_cost)}</td>
-                    <td className={`num ${tone(p.price - p.avg_cost)}`}>{money(p.price)}</td>
-                    <td className={`num ${p.price >= p.extra.tp1_price ? 'hit' : ''}`}>{money(p.extra.tp1_price)}</td>
-                    <td className={`num ${p.price >= p.extra.tp2_price ? 'hit' : ''}`}>{money(p.extra.tp2_price)}</td>
-                    <td className={`num ${p.price <= p.extra.sl_price ? 'hit neg' : ''}`}>{money(p.extra.sl_price)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="muted small">Los porcentajes se cambian en Ajustes.</p>
-        </div>
-      )}
 
       {editing && (
         <FormModal
