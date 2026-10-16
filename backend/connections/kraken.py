@@ -75,10 +75,11 @@ class KrakenClient:
     def public(self, method: str) -> dict:
         return self._result(requests.get(f"{API}/0/public/{method}", timeout=30))
 
-    def _paged(self, method: str, key: str) -> dict:
+    def _paged(self, method: str, key: str, since: dt.date | None = None) -> dict:
         rows, offset = {}, 0
+        start = {"start": int(dt.datetime.combine(since, dt.time(), tzinfo=dt.UTC).timestamp())} if since else {}
         while True:
-            result = self.private(method, {"ofs": offset})
+            result = self.private(method, {"ofs": offset, **start})
             page = result.get(key, {})
             rows.update(page)
             offset += len(page)
@@ -91,7 +92,8 @@ class KrakenClient:
         self.private("TradesHistory", {"ofs": 0})
         self.private("Ledgers", {"ofs": 0})
 
-    def snapshot(self) -> Snapshot:
+    def snapshot(self, since: dt.date | None = None) -> Snapshot:
+        """Balances, plus trades and ledger entries (all of them, or only those from `since` on)."""
         snap = Snapshot()
         for code, amount in self.private("Balance").items():
             if Decimal(amount):
@@ -102,7 +104,7 @@ class KrakenClient:
             pair = (kraken_symbol(info["base"]), kraken_symbol(info["quote"]))
             pairs[name] = pairs[info.get("altname", name)] = pair
 
-        for txid, t in self._paged("TradesHistory", "trades").items():
+        for txid, t in self._paged("TradesHistory", "trades", since).items():
             base, quote = pairs.get(t["pair"], (None, None))
             if base is None or quote not in CASH_SYMBOLS:
                 snap.skipped += 1  # crypto/crypto or non-USD pair: reconciliation covers the balances
@@ -114,7 +116,7 @@ class KrakenClient:
                 )
             )
 
-        for lid, entry in self._paged("Ledgers", "ledger").items():
+        for lid, entry in self._paged("Ledgers", "ledger", since).items():
             symbol, amount = kraken_symbol(entry["asset"]), Decimal(entry["amount"])
             kind, subtype = entry.get("type", ""), entry.get("subtype", "")
             if kind in ("deposit", "withdrawal") and symbol in CASH_SYMBOLS:

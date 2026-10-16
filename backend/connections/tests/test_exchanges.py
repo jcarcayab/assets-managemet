@@ -197,7 +197,8 @@ class FakeExchange:
         if self.error:
             raise ExchangeError(self.error)
 
-    def snapshot(self):
+    def snapshot(self, since=None):
+        self.since = since
         if self.error:
             raise ExchangeError(self.error)
         return self.snap
@@ -269,6 +270,52 @@ def test_sync_is_idempotent(user, conn, no_network):
     assert Transaction.objects.count() == count
     conn.refresh_from_db()
     assert position(user, conn.account).quantity == 12
+
+
+def test_later_syncs_only_read_recent_history(user, conn, no_network):
+    first = FakeExchange(snapshot())
+    sync_exchange(conn, first)
+    assert first.since is None  # first sync: everything
+    second = FakeExchange(snapshot())
+    sync_exchange(conn, second)
+    conn.refresh_from_db()
+    assert second.since == conn.last_synced_at.date() - dt.timedelta(days=7)
+    full = FakeExchange(snapshot())
+    sync_exchange(conn, full, full=True)
+    assert full.since is None
+
+
+def test_coinbase_stops_paging_at_older_transactions():
+    client = CoinbaseClient("key", "secret")
+    tx = lambda id_, day: {**_cb_tx(id_, "buy", 1, 100), "created_at": f"2025-{day}T00:00:00Z"}  # noqa: E731
+    pages = {
+        "/v2/accounts": {"data": [{"id": "a", "currency": "SOL", "balance": {"amount": "5", "currency": "SOL"}}]},
+        "/v2/accounts/a/transactions": {"data": [tx("n1", "03-10"), tx("n2", "03-05")], "pagination": {"next_uri": "/p2"}},
+        "/p2": {"data": [tx("n3", "03-02"), tx("old", "01-01")], "pagination": {"next_uri": "/p3"}},
+    }
+    calls = []
+
+    def get(path, params=None):
+        calls.append(path)
+        return pages[path]
+
+    with mock.patch.object(client, "get", side_effect=get):
+        snap = client.snapshot(since=dt.date(2025, 3, 1))
+    assert "/p3" not in calls
+    assert [t.ext_id for t in snap.trades] == ["coinbase:n1", "coinbase:n2", "coinbase:n3"]
+
+
+def test_kraken_sends_start_when_incremental():
+    client = KrakenClient("key", base64.b64encode(b"secret").decode())
+    seen = []
+
+    def private(method, data=None):
+        seen.append((method, (data or {}).get("start")))
+        return {"Balance": {}, "TradesHistory": {"count": 0, "trades": {}}, "Ledgers": {"count": 0, "ledger": {}}}[method]
+
+    with mock.patch.object(client, "private", side_effect=private), mock.patch.object(client, "public", return_value={}):
+        client.snapshot(since=dt.date(2025, 1, 1))
+    assert ("TradesHistory", JAN1) in seen and ("Ledgers", JAN1) in seen
 
 
 def test_reward_without_value_uses_daily_close(user, conn, no_network):

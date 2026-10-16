@@ -5,6 +5,7 @@ Crypto moved between your own wallets/exchanges arrives without its original cos
 by reconciliation at the current price.
 """
 
+import datetime as dt
 import logging
 from decimal import Decimal
 
@@ -147,10 +148,15 @@ def apply_snapshot(conn: ExchangeConnection, snap: Snapshot) -> dict:
     return report
 
 
-def sync_exchange(conn: ExchangeConnection, client=None) -> dict:
+OVERLAP = dt.timedelta(days=7)  # re-read the last days on each sync to catch late-posted entries
+
+
+def sync_exchange(conn: ExchangeConnection, client=None, full: bool = False) -> dict:
+    """First sync (or `full`) reads the whole history; later ones only what's new since the last sync."""
     client = client or client_for(conn)
+    since = None if full or not conn.last_synced_at else timezone.localdate(conn.last_synced_at) - OVERLAP
     try:
-        report = apply_snapshot(conn, client.snapshot())
+        report = apply_snapshot(conn, client.snapshot(since=since))
         conn.last_synced_at, conn.last_error = timezone.now(), ""
         report["error"] = None
     except ExchangeError as exc:
