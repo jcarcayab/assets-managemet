@@ -364,9 +364,10 @@ def _group(positions, key_fn, label_fn):
     return groups
 
 
-def compute_summary(user) -> dict:
+def compute_summary(user, positions: list[Position] | None = None) -> dict:
+    """`positions` lets callers that already computed them skip the (slow) ledger replay."""
     s = UserSettings.for_user(user)
-    positions = compute_positions(user)
+    positions = compute_positions(user) if positions is None else positions
     assets_value = sum((p.market_value for p in positions), ZERO)
     liabilities = sum((lb.balance for lb in Liability.objects.filter(owner=user)), ZERO)
     net_worth = assets_value - liabilities
