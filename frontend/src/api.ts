@@ -81,19 +81,6 @@ export type SavingsPlan = {
   totals: { balance: number; interest_earned: number; net_after_tax: number; months: number | null }
 }
 
-export type Spending = {
-  month: string
-  is_current_month: boolean
-  month_progress: number
-  spent: number
-  budget: number
-  unmapped_budget: number
-  categories: { category: string; label: string; budget: number; spent: number; remaining: number; avg_3m: number }[]
-  history: { month: string; spent: number }[]
-  top_merchants: { name: string; spent: number }[]
-  sources: { account: string; importing: boolean }[]
-}
-
 export type CsvPreview = {
   rows: { line: number; kind: string; date: string; symbol: string; quantity: number; price: number; fees: number; amount: number; notes: string; status: 'new' | 'duplicate' }[]
   errors: { line: number; error: string }[]
@@ -127,7 +114,6 @@ export type Choices = {
   budget_kinds: Choice[]
   frequencies: Choice[]
   liability_kinds: Choice[]
-  spending_categories: Choice[]
   benchmarks: Choice[]
 }
 
@@ -137,7 +123,6 @@ export type BudgetItem = {
   kind: 'income' | 'expense'
   kind_label: string
   category: string
-  spending_category: string
   amount: number
   frequency: 'monthly' | 'annual'
   monthly: number
@@ -664,7 +649,6 @@ export type SyncReport = {
   skipped: number
   liabilities: number
   interest: number
-  spending?: number
   error: { code: string; message: string; needs_reauth: boolean } | null
 }
 

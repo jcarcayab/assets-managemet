@@ -30,7 +30,6 @@ urlpatterns = [
     path("monte-carlo/", views.monte_carlo_view),
     path("contribution-limits/", views.contribution_limits_view),
     path("debts/savings-plan/", views.savings_plan_view),
-    path("spending/", views.spending_view),
     path("import/csv/", views.csv_import_view),
     path("prices/refresh/", views.refresh_prices_view),
     path("settings/", views.settings_view),

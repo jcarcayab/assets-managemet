@@ -79,27 +79,6 @@ class ExchangeConnection(models.Model):
         self.key_hint = key.strip()[-6:]
 
 
-class BankTransaction(models.Model):
-    """A posted card / bank movement from Plaid Transactions, kept to compare real spending with the budget."""
-
-    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="bank_transactions")
-    plaid_account = models.ForeignKey("PlaidAccount", on_delete=models.CASCADE, related_name="transactions")
-    transaction_id = models.CharField(max_length=100, unique=True)
-    date = models.DateField(db_index=True)
-    amount = models.DecimalField(**MONEY, help_text="Positivo = sale dinero (compra); negativo = entra (reembolso, pago).")
-    name = models.CharField(max_length=200, blank=True)
-    merchant = models.CharField(max_length=200, blank=True)
-    category = models.CharField(max_length=40, blank=True, help_text="Categoría principal de Plaid.")
-    detailed_category = models.CharField(max_length=80, blank=True)
-
-    class Meta:
-        ordering = ["-date", "-id"]
-        indexes = [models.Index(fields=["owner", "date"])]
-
-    def __str__(self):
-        return f"{self.date} {self.merchant or self.name} {self.amount}"
-
-
 class PlaidAccount(models.Model):
     """An account inside a Plaid item, mapped to one of our portfolio accounts."""
 
