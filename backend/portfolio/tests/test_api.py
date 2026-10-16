@@ -84,3 +84,15 @@ def test_settings_roundtrip(api):
     assert api.get("/api/settings/").json()["take_profit_1_pct"] == 10
     resp = api.patch("/api/settings/", {"retirement_age": 60}, format="json")
     assert resp.json()["retirement_age"] == 60
+
+
+def test_transactions_paginate_only_when_asked(api, broker, voo):
+    for day in range(1, 6):
+        buy(broker, voo, 1, 100, day=day)
+    assert len(api.get("/api/transactions/").json()) == 5  # unpaged: other screens keep the full list
+
+    page = api.get(f"/api/transactions/?account={broker.id}&page=2&page_size=2").json()
+    assert page["count"] == 5
+    assert [t["date"] for t in page["results"]] == ["2025-01-03", "2025-01-02"]  # newest first
+    assert page["next"] and page["previous"]
+    assert api.get("/api/cash-flows/?page=1").json()["count"] == 0

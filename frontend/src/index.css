@@ -865,3 +865,12 @@ button:focus-visible {
 .key-help p {
   margin: 0.4rem 0 0;
 }
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8rem;
+  margin-top: 0.8rem;
+  flex-wrap: wrap;
+}

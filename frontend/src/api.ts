@@ -56,6 +56,7 @@ export function safeNext(raw: string | null): string | null {
 
 // -- types mirroring the Django serializers --------------------------------------------------------
 
+export type Page<T> = { count: number; next: string | null; previous: string | null; results: T[] }
 export type Choice = { value: string; label: string }
 export type Choices = {
   account_types: Choice[]
