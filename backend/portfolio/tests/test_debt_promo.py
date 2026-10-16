@@ -81,3 +81,11 @@ def test_alert_when_the_payment_doesnt_cover_interest(user):
     [alert] = compute_debts(user)["alerts"]
     assert alert["name"] == "Card" and alert["level"] == "critical"
     assert "no cubre los intereses (~$45.73/mes" in alert["message"] and "~$187" in alert["message"]
+
+
+def test_paid_off_debts_have_no_place_in_the_order(user):
+    Liability.objects.create(owner=user, name="Paid card", kind="credit_card", balance=0, interest_rate_pct=30)
+    Liability.objects.create(owner=user, name="Card", kind="credit_card", balance=500, interest_rate_pct=20,
+                             minimum_payment=50)
+    rows = compute_debts(user)["rows"]
+    assert [(r["name"], r["order"]) for r in rows] == [("Card", 1), ("Paid card", None)]

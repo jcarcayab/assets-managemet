@@ -148,7 +148,7 @@ export type Debts = {
   alerts: { name: string; level: 'warning' | 'critical'; message: string }[]
   rows: {
     id: number
-    order: number
+    order: number | null
     name: string
     kind_label: string
     balance: number

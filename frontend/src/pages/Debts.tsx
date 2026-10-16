@@ -50,6 +50,7 @@ function Advice({ r }: { r: Row }) {
 }
 
 function Plan({ d }: { d: DebtsData }) {
+  const paidOff = d.rows.filter((r) => r.balance <= 0).length
   return (
     <>
       {d.alerts.map((a) => (
@@ -97,7 +98,7 @@ function Plan({ d }: { d: DebtsData }) {
               </tr>
             </thead>
             <tbody>
-              {d.rows.map((r) => (
+              {d.rows.filter((r) => r.balance > 0).map((r) => (
                 <tr key={r.id}>
                   <td>{r.order}</td>
                   <td>
@@ -123,6 +124,12 @@ function Plan({ d }: { d: DebtsData }) {
             </tbody>
           </table>
         </div>
+        {paidOff > 0 && (
+          <p className="muted small">
+            {paidOff === 1 ? 'Una deuda con saldo $0 no aparece' : `${paidOff} deudas con saldo $0 no aparecen`} en el orden de pago; siguen
+            en la lista de abajo.
+          </p>
+        )}
       </div>
     </>
   )
