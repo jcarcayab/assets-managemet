@@ -231,7 +231,7 @@ export type EquityGrant = {
   quantity: number
   strike: number
   fmv: number
-  exercised: boolean
+  exercised_quantity: number
   grant_date: string | null
   vesting_start: string | null
   vesting_months: number
@@ -243,6 +243,18 @@ export type EquityGrant = {
   notes: string
   cost_basis: number
   market_value: number
+}
+
+export type EquityExerciseRow = {
+  id: number
+  date: string
+  quantity: number
+  fmv: number
+  cost: number
+  spread: number
+  income_tax: number
+  amt_preference: number
+  notes: string
 }
 
 export type EquitySummary = {
@@ -273,6 +285,12 @@ export type EquitySummary = {
     expiration_date: string | null
     days_to_expiration: number | null
     post_termination_days: number
+    exercised: number
+    open_options: number
+    shares: number
+    shares_value: number
+    shares_cost_basis: number
+    exercises: EquityExerciseRow[]
   }[]
   alerts: { level: 'warning' | 'critical'; company: string; message: string }[]
   totals: { value: number; unvested_value: number; exercise_cost: number; exercise_tax: number; cash_to_exercise: number }

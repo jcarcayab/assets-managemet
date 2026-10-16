@@ -20,6 +20,7 @@ from portfolio.models import (
     Asset,
     AssetClass,
     CashFlow,
+    EquityExercise,
     EquityGrant,
     PriceSource,
     Snapshot,
@@ -304,16 +305,19 @@ class LegacyImporter:
                     owner=self.user, name=f"{company} Equity",
                     defaults={"account_type": AccountType.PRIVATE_EQUITY, "is_liquid": False, "institution": company},
                 )
-            EquityGrant.objects.create(
+            grant = EquityGrant.objects.create(
                 account=acc,
                 company=company,
                 quantity=qty,
                 strike=strike,
                 fmv=fmv,
-                exercised=str(row.get("¿Ejercidas?") or "").lower().startswith("s"),
                 # CoinRoutes is crypto trading infrastructure: its value moves with the crypto market.
                 sector=CRYPTO_SECTOR if company.lower() == "coinroutes" else "",
             )
+            if str(row.get("¿Ejercidas?") or "").lower().startswith("s") and grant.is_option:
+                EquityExercise.objects.create(
+                    grant=grant, date=timezone.localdate(), quantity=qty, fmv=fmv, notes="Ejercidas según el Excel."
+                )
             self.report.equity_grants += 1
 
     def _history(self):

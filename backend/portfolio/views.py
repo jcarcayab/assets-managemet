@@ -14,6 +14,7 @@ from portfolio.models import (
     BudgetKind,
     CashFlow,
     CashFlowKind,
+    EquityExercise,
     EquityGrant,
     ExposureCategory,
     Frequency,
@@ -34,6 +35,7 @@ from portfolio.serializers import (
     BudgetItemSerializer,
     LiabilitySerializer,
     CashFlowSerializer,
+    EquityExerciseSerializer,
     EquityGrantSerializer,
     PositionSerializer,
     SnapshotSerializer,
@@ -135,6 +137,13 @@ class EquityGrantViewSet(OwnedViewSet):
     queryset = EquityGrant.objects.select_related("account")
     serializer_class = EquityGrantSerializer
     owner_path = "account__owner"
+
+
+class EquityExerciseViewSet(OwnedViewSet):
+    queryset = EquityExercise.objects.select_related("grant")
+    serializer_class = EquityExerciseSerializer
+    owner_path = "grant__account__owner"
+    filter_params = ("grant",)
 
 
 class BudgetItemViewSet(OwnedViewSet):

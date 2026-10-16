@@ -301,9 +301,9 @@ def add_months(d: dt.date, months: int) -> dt.date:
 class EquityGrant(models.Model):
     """Private company equity.
 
-    Options are valued at intrinsic value (FMV − strike) × vested options until exercised; exercised options and
-    shares at FMV. Only the vested part counts, and an optional liquidity discount reflects that private shares
-    can't be sold at FMV today.
+    Options can be exercised in parts (EquityExercise). Vested options not yet exercised are valued at intrinsic
+    value (FMV − strike); shares (bought, or from exercises) at FMV. Unvested units don't count, and an optional
+    liquidity discount reflects that private shares can't be sold at FMV today.
     """
 
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="equity_grants")
@@ -312,7 +312,6 @@ class EquityGrant(models.Model):
     quantity = models.DecimalField(**QTY)
     strike = models.DecimalField(**QTY, help_text="Strike de la opción, o precio pagado por acción.")
     fmv = models.DecimalField(**QTY, help_text="Valor justo de mercado por acción (manual, p.ej. último 409A).")
-    exercised = models.BooleanField(default=False)
     grant_date = models.DateField(null=True, blank=True)
     vesting_start = models.DateField(null=True, blank=True, help_text="Vacío = todo adquirido (vested).")
     vesting_months = models.PositiveSmallIntegerField(default=48)
@@ -339,10 +338,23 @@ class EquityGrant(models.Model):
 
     @property
     def is_option(self) -> bool:
-        return self.grant_type != GrantType.SHARES and not self.exercised
+        return self.grant_type != GrantType.SHARES
+
+    def exercised_quantity(self) -> Decimal:
+        """Options already turned into shares (uses prefetched `exercises` when available)."""
+        if not self.is_option or self.pk is None:
+            return Decimal(0)
+        return sum((e.quantity for e in self.exercises.all()), Decimal(0))
+
+    def open_options(self, on: dt.date | None = None) -> Decimal:
+        """Vested options still available to exercise."""
+        return max(self.vested_quantity(on) - self.exercised_quantity(), Decimal(0)) if self.is_option else Decimal(0)
+
+    def shares_held(self, on: dt.date | None = None) -> Decimal:
+        return self.exercised_quantity() if self.is_option else self.vested_quantity(on)
 
     def vested_quantity(self, on: dt.date | None = None) -> Decimal:
-        if self.vesting_start is None or self.grant_type == GrantType.SHARES or self.exercised:
+        if self.vesting_start is None or self.grant_type == GrantType.SHARES:
             return self.quantity
         on = on or timezone.localdate()
         months = (on.year - self.vesting_start.year) * 12 + on.month - self.vesting_start.month
@@ -368,22 +380,61 @@ class EquityGrant(models.Model):
         return add_months(self.vesting_start, self.vesting_months) if self.vesting_start else None
 
     @property
+    def share_value(self) -> Decimal:
+        """Value of one share, after the liquidity discount."""
+        return self.fmv * (1 - self.liquidity_discount_pct / 100)
+
+    @property
     def per_share_value(self) -> Decimal:
-        """Value per vested unit, after the liquidity discount."""
-        fmv = self.fmv * (1 - self.liquidity_discount_pct / 100)
-        return max(fmv - self.strike, Decimal(0)) if self.is_option else fmv
+        """Value of one unit of the grant as granted: an option's intrinsic value, or a share."""
+        return max(self.share_value - self.strike, Decimal(0)) if self.is_option else self.share_value
+
+    @property
+    def shares_cost_basis(self) -> Decimal:
+        """Tax basis of the shares held. NSO: FMV at exercise (the spread was already taxed as wages)."""
+        if not self.is_option:
+            return self.vested_quantity() * self.strike
+        if self.grant_type == GrantType.NSO:
+            return sum((e.quantity * max(e.fmv, self.strike) for e in self.exercises.all()), Decimal(0))
+        return self.exercised_quantity() * self.strike
 
     @property
     def cost_basis(self) -> Decimal:
-        return Decimal(0) if self.is_option else self.vested_quantity() * self.strike
+        return self.shares_cost_basis  # open options cost nothing until exercised
 
     @property
     def market_value(self) -> Decimal:
-        return self.vested_quantity() * self.per_share_value
+        options = self.open_options() * self.per_share_value if self.is_option else Decimal(0)
+        return self.shares_held() * self.share_value + options
 
     @property
     def exercise_cost(self) -> Decimal:
-        return self.vested_quantity() * self.strike if self.is_option else Decimal(0)
+        """Cash to exercise every vested option still open."""
+        return self.open_options() * self.strike
+
+
+class EquityExercise(models.Model):
+    """Options of a grant exercised on one day (a grant can be exercised a bit at a time)."""
+
+    grant = models.ForeignKey(EquityGrant, on_delete=models.CASCADE, related_name="exercises")
+    date = models.DateField()
+    quantity = models.DecimalField(**QTY)
+    fmv = models.DecimalField(**QTY, help_text="FMV por acción el día del ejercicio.")
+    notes = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        ordering = ["date", "id"]
+
+    def __str__(self):
+        return f"{self.grant.company}: {self.quantity} el {self.date}"
+
+    @property
+    def cost(self) -> Decimal:
+        return self.quantity * self.grant.strike
+
+    @property
+    def spread(self) -> Decimal:
+        return self.quantity * max(self.fmv - self.grant.strike, Decimal(0))
 
 
 class Snapshot(models.Model):

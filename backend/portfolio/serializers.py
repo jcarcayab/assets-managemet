@@ -8,8 +8,10 @@ from portfolio.models import (
     Asset,
     BudgetItem,
     CashFlow,
+    EquityExercise,
     EquityGrant,
     ExposureCategory,
+    GrantType,
     Liability,
     Snapshot,
     Transaction,
@@ -165,11 +167,12 @@ class EquityGrantSerializer(serializers.ModelSerializer):
     grant_type_label = serializers.CharField(source="get_grant_type_display", read_only=True)
     cost_basis = serializers.DecimalField(max_digits=28, decimal_places=10, read_only=True)
     market_value = serializers.DecimalField(max_digits=28, decimal_places=10, read_only=True)
+    exercised_quantity = serializers.DecimalField(max_digits=28, decimal_places=10, read_only=True)
 
     class Meta:
         model = EquityGrant
         fields = [
-            "id", "account", "company", "grant_type", "grant_type_label", "quantity", "strike", "fmv", "exercised",
+            "id", "account", "company", "grant_type", "grant_type_label", "quantity", "strike", "fmv", "exercised_quantity",
             "grant_date", "vesting_start", "vesting_months", "cliff_months", "expiration_date",
             "post_termination_days", "liquidity_discount_pct", "sector", "notes", "cost_basis", "market_value",
         ]
@@ -179,6 +182,32 @@ class EquityGrantSerializer(serializers.ModelSerializer):
         months = attrs.get("vesting_months", getattr(self.instance, "vesting_months", 0))
         if cliff > months:
             raise serializers.ValidationError({"cliff_months": "El cliff no puede ser mayor que el vesting total."})
+        return attrs
+
+
+class OwnedGrantField(serializers.PrimaryKeyRelatedField):
+    def get_queryset(self):
+        return EquityGrant.objects.filter(account__owner=self.context["request"].user)
+
+
+class EquityExerciseSerializer(serializers.ModelSerializer):
+    grant = OwnedGrantField()
+
+    class Meta:
+        model = EquityExercise
+        fields = ["id", "grant", "date", "quantity", "fmv", "notes"]
+
+    def validate(self, attrs):
+        grant = attrs.get("grant", getattr(self.instance, "grant", None))
+        quantity = attrs.get("quantity", getattr(self.instance, "quantity", None))
+        if grant.grant_type == GrantType.SHARES:
+            raise serializers.ValidationError({"grant": "Solo se ejercen opciones."})
+        if quantity is None or quantity <= 0:
+            raise serializers.ValidationError({"quantity": "Debe ser mayor que 0."})
+        others = grant.exercises.exclude(pk=getattr(self.instance, "pk", None))
+        left = grant.quantity - sum((e.quantity for e in others), Decimal(0))
+        if quantity > left:
+            raise serializers.ValidationError({"quantity": f"Solo quedan {left.normalize()} opciones por ejercer."})
         return attrs
 
 
