@@ -174,7 +174,8 @@ class EquityGrantSerializer(serializers.ModelSerializer):
         fields = [
             "id", "account", "company", "grant_type", "grant_type_label", "quantity", "strike", "fmv", "exercised_quantity",
             "grant_date", "vesting_start", "vesting_months", "cliff_months", "expiration_date",
-            "post_termination_days", "liquidity_discount_pct", "sector", "notes", "cost_basis", "market_value",
+            "post_termination_days", "termination_date", "liquidity_discount_pct", "sector", "notes", "cost_basis",
+            "market_value",
         ]
 
     def validate(self, attrs):

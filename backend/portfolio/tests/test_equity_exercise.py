@@ -49,3 +49,38 @@ def test_exercise_api_checks_remaining_options_and_ownership(api, grant, other_u
     theirs = EquityGrant.objects.create(account=theirs_acc, company="X", quantity=10, strike=1, fmv=2)
     assert api.post("/api/equity-exercises/", {"grant": theirs.id, "date": "2026-10-01", "quantity": "1", "fmv": "2"}).status_code == 400
     assert api.get("/api/equity-grants/").json()[0]["exercised_quantity"] == D(1)
+
+
+def test_exit_scenarios_after_tax(user, grant):
+    from portfolio.models import UserSettings
+
+    s = UserSettings.for_user(user)
+    s.ordinary_income_tax_pct, s.capital_gains_tax_pct = D(30), D(15)
+    s.save()
+    EquityExercise.objects.create(grant=grant, date=dt.date(2026, 3, 1), quantity=20, fmv=15)
+    [company] = compute_equity(user)["scenarios"]
+    rows = {r["multiple"]: r for r in company["rows"]}
+    assert rows[0]["gross"] == 0 and rows[0]["net"] == 0
+    # 2× FMV = $40: 20 shares → 800 (gain over the $15 basis 500 × 15% = 75); 80 options → 80 × 30 = 2400 (NSO 30%).
+    assert rows[2]["gross"] == 3200
+    assert rows[2]["net"] == 3200 - 75 - 720
+
+
+def test_leaving_stops_vesting_and_starts_the_exercise_window(user, grant):
+    from django.utils import timezone
+
+    today = timezone.localdate()
+    grant.vesting_start, grant.vesting_months, grant.cliff_months = today - dt.timedelta(days=730), 48, 12
+    grant.termination_date = today - dt.timedelta(days=30)
+    grant.save()
+    [g] = compute_equity(user)["grants"]
+    assert g["vested"] < 50 and g["next_vest_date"] is None  # stopped about a month short of 2 years
+    assert g["exercise_deadline"] == grant.termination_date + dt.timedelta(days=90)
+    [alert] = compute_equity(user)["alerts"]
+    assert alert["level"] == "critical" and "60 días" in alert["message"]
+
+    grant.termination_date = today - dt.timedelta(days=120)
+    grant.save()
+    data = compute_equity(user)
+    assert data["grants"][0]["options_lost"] and data["grants"][0]["value"] == 0
+    assert "se perdieron" in data["alerts"][0]["message"]

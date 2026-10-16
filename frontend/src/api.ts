@@ -238,6 +238,7 @@ export type EquityGrant = {
   cliff_months: number
   expiration_date: string | null
   post_termination_days: number
+  termination_date: string | null
   liquidity_discount_pct: number
   sector: string
   notes: string
@@ -291,6 +292,14 @@ export type EquitySummary = {
     shares_value: number
     shares_cost_basis: number
     exercises: EquityExerciseRow[]
+    termination_date: string | null
+    exercise_deadline: string | null
+    options_lost: boolean
+  }[]
+  scenarios: {
+    company: string
+    fmv: number
+    rows: { multiple: number; price: number; gross: number; net: number; full_gross: number; full_net: number }[]
   }[]
   alerts: { level: 'warning' | 'critical'; company: string; message: string }[]
   totals: { value: number; unvested_value: number; exercise_cost: number; exercise_tax: number; cash_to_exercise: number }

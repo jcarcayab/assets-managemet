@@ -320,6 +320,9 @@ class EquityGrant(models.Model):
     post_termination_days = models.PositiveSmallIntegerField(
         default=90, help_text="Días para ejercer si dejas la empresa."
     )
+    termination_date = models.DateField(
+        null=True, blank=True, help_text="Si dejaste la empresa: el vesting se detiene y empieza el plazo para ejercer."
+    )
     liquidity_discount_pct = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal(0),
         validators=[MinValueValidator(Decimal(0)), MaxValueValidator(Decimal(100))],
@@ -346,9 +349,23 @@ class EquityGrant(models.Model):
             return Decimal(0)
         return sum((e.quantity for e in self.exercises.all()), Decimal(0))
 
+    @property
+    def exercise_deadline(self) -> dt.date | None:
+        """Last day to exercise: the expiration date, or the post-termination window if you left (earlier wins)."""
+        dates = [d for d in (self.expiration_date,) if d]
+        if self.termination_date:
+            dates.append(self.termination_date + dt.timedelta(days=self.post_termination_days))
+        return min(dates) if dates else None
+
+    def options_lost(self, on: dt.date | None = None) -> bool:
+        deadline = self.exercise_deadline
+        return bool(deadline and (on or timezone.localdate()) > deadline)
+
     def open_options(self, on: dt.date | None = None) -> Decimal:
-        """Vested options still available to exercise."""
-        return max(self.vested_quantity(on) - self.exercised_quantity(), Decimal(0)) if self.is_option else Decimal(0)
+        """Vested options still available to exercise (none once the deadline has passed)."""
+        if not self.is_option or self.options_lost(on):
+            return Decimal(0)
+        return max(self.vested_quantity(on) - self.exercised_quantity(), Decimal(0))
 
     def shares_held(self, on: dt.date | None = None) -> Decimal:
         return self.exercised_quantity() if self.is_option else self.vested_quantity(on)
@@ -357,6 +374,8 @@ class EquityGrant(models.Model):
         if self.vesting_start is None or self.grant_type == GrantType.SHARES:
             return self.quantity
         on = on or timezone.localdate()
+        if self.termination_date:
+            on = min(on, self.termination_date)  # vesting stops when you leave
         months = (on.year - self.vesting_start.year) * 12 + on.month - self.vesting_start.month
         if on.day < self.vesting_start.day:
             months -= 1
@@ -367,7 +386,7 @@ class EquityGrant(models.Model):
         return (Decimal(self.quantity) * months / self.vesting_months).quantize(Decimal("0.0001"))
 
     def next_vest_date(self, on: dt.date | None = None) -> dt.date | None:
-        if self.vesting_start is None or self.vested_quantity(on) >= self.quantity:
+        if self.vesting_start is None or self.termination_date or self.vested_quantity(on) >= self.quantity:
             return None
         on = on or timezone.localdate()
         months = max(self.cliff_months, 1)
