@@ -96,7 +96,7 @@ class TransactionSerializer(serializers.ModelSerializer):
         model = Transaction
         fields = [
             "id", "account", "account_name", "asset", "asset_symbol", "kind", "kind_label", "date", "quantity",
-            "price", "fees", "amount", "to_account", "to_account_name", "total", "external_id", "notes",
+            "price", "fees", "amount", "to_account", "to_account_name", "total", "external_id", "employer_paid", "notes",
         ]
 
     # Which fields each kind needs to be > 0.

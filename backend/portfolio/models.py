@@ -216,6 +216,9 @@ class Transaction(models.Model):
         help_text="Cuenta destino (solo transferencias).",
     )
     external_id = models.CharField(max_length=100, blank=True, help_text="Order ID del exchange/broker.")
+    employer_paid = models.BooleanField(
+        default=False, help_text="Compra pagada por el empleador (match del 401k): para ti cuesta $0, todo es ganancia."
+    )
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

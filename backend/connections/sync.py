@@ -282,13 +282,18 @@ def apply_transaction(t: dict, account: Account, securities: dict) -> str | None
         return "tx"
 
     if kind == "buy" and qty:
+        employer = False
         if subtype == "contribution":
             # 401k-style payroll buys: also record the money coming in, split between you and the employer match.
-            flow = CashFlowKind.EMPLOYER if "MATCH" in notes.upper() else CashFlowKind.DEPOSIT
+            employer = "MATCH" in notes.upper()
+            flow = CashFlowKind.EMPLOYER if employer else CashFlowKind.DEPOSIT
             CashFlow.objects.create(
                 account=account, kind=flow, date=date, amount=amount or qty * price, external_id=ext, notes=notes
             )
-        return ledger(TransactionKind.BUY, asset_for_security(owner, sec), quantity=qty, price=price, fees=fees)
+        return ledger(
+            TransactionKind.BUY, asset_for_security(owner, sec), quantity=qty, price=price, fees=fees,
+            employer_paid=employer,
+        )
     if kind == "sell" and qty:
         return ledger(TransactionKind.SELL, asset_for_security(owner, sec), quantity=qty, price=price, fees=fees)
     if (kind == "fee" or subtype in FEE_SUBTYPES) and amount:

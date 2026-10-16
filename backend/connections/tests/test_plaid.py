@@ -383,10 +383,14 @@ def test_401k_contributions_record_the_money_coming_in(user, name, flow):
         "quantity": 2, "price": 200, "amount": 400, "fees": 0, "security_id": "s1",
     }
     assert apply_transaction(t, account, {"s1": sec}) == "tx"
-    assert Transaction.objects.get(account=account).quantity == 2
+    buy = Transaction.objects.get(account=account)
+    assert buy.quantity == 2
+    assert buy.employer_paid == (flow == "employer")  # the match costs you nothing
     cash = CashFlow.objects.get(account=account)
     assert (cash.kind, cash.amount) == (flow, 400)
     assert apply_transaction(t, account, {"s1": sec}) == "dup"
+    [position] = [p for p in compute_positions(user) if p.account == account]
+    assert (position.quantity, position.cost_basis) == (2, 0 if flow == "employer" else 400)
 
 
 BANK = {

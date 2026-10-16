@@ -289,6 +289,7 @@ export type Transaction = {
   to_account_name: string | null
   total: number
   external_id: string
+  employer_paid: boolean
   notes: string
 }
 
