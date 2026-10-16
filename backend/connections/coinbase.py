@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
-from connections.exchange_data import CASH_SYMBOLS, CashMove, ExchangeError, Reward, Snapshot, Trade
+from connections.exchange_data import CASH_SYMBOLS, CashMove, ExchangeError, Fee, Reward, Snapshot, Trade
 
 HOST = "api.coinbase.com"
 TRADE_TYPES = {"buy", "sell", "advanced_trade_fill", "trade"}
@@ -115,9 +115,36 @@ class CoinbaseClient:
             )
         self.get("/v2/accounts", {"limit": 1})
 
+    def commissions(self, since: dt.date | None = None) -> list[Fee]:
+        """Advanced Trade commissions per (coin, day), from the v3 fills (v2 transactions don't carry them).
+
+        Only spot products quoted in dollars; futures aren't tracked as holdings here."""
+        params = {"limit": 1000}
+        if since:
+            params["start_sequence_timestamp"] = f"{since.isoformat()}T00:00:00Z"
+        daily: dict[tuple[str, dt.date], Decimal] = {}
+        cursor = None
+        while True:
+            data = self.get("/api/v3/brokerage/orders/historical/fills", {**params, **({"cursor": cursor} if cursor else {})})
+            for f in data.get("fills", []):
+                base, _, quote = f.get("product_id", "").partition("-")
+                if quote not in CASH_SYMBOLS or f.get("product_type", "SPOT") != "SPOT":
+                    continue
+                key = (base.upper(), _date(f["trade_time"]))
+                daily[key] = daily.get(key, Decimal(0)) + Decimal(f.get("commission") or "0")
+            cursor = data.get("cursor")
+            if not cursor or not data.get("fills"):
+                break
+        return [
+            Fee(f"coinbase-fee:{symbol}:{day.isoformat()}", day, symbol, amount)
+            for (symbol, day), amount in sorted(daily.items(), key=lambda kv: kv[0][1])
+            if amount
+        ]
+
     def snapshot(self, since: dt.date | None = None) -> Snapshot:
-        """Balances, plus transactions (all of them, or only those from `since` on)."""
+        """Balances, plus transactions and commissions (all of them, or only those from `since` on)."""
         snap = Snapshot()
+        snap.fees = self.commissions(since)
         for account in self.paginate("/v2/accounts"):
             symbol = _code(account.get("currency") or account.get("balance", {}).get("currency"))
             balance = Decimal(account.get("balance", {}).get("amount", "0"))

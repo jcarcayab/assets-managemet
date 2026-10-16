@@ -210,6 +210,14 @@ COINBASE = {
         _cb_tx("u1", "fiat_deposit", 500, 500, currency="USD"),
         _cb_tx("u2", "buy", -1000, -1000, currency="USD"),
     ]},
+    "/api/v3/brokerage/orders/historical/fills": {"fills": [
+        {"product_id": "SOL-USD", "trade_time": "2025-01-05T10:00:00.1Z", "commission": "0.30", "product_type": "SPOT"},
+        {"product_id": "SOL-USDC", "trade_time": "2025-01-05T23:00:00Z", "commission": "0.20"},
+        {"product_id": "SOL-USD", "trade_time": "2025-01-06T01:00:00Z", "commission": "0.10"},
+        {"product_id": "SOL-27FEB26-CDE", "trade_time": "2025-01-06T01:00:00Z", "commission": "1.00",
+         "product_type": "FUTURE"},
+        {"product_id": "ETH-BTC", "trade_time": "2025-01-06T01:00:00Z", "commission": "0.001"},
+    ]},
 }
 
 
@@ -225,6 +233,10 @@ def test_coinbase_snapshot_maps_transactions():
     assert snap.skipped == 1
     [reward] = snap.rewards
     assert (reward.quantity, reward.value) == (D("0.5"), D(60))
+    # Commissions per coin and day; futures and non-dollar pairs left out.
+    assert [(f.ext_id, f.amount) for f in snap.fees] == [
+        ("coinbase-fee:SOL:2025-01-05", D("0.50")), ("coinbase-fee:SOL:2025-01-06", D("0.10")),
+    ]
     assert [(c.amount, c.kind) for c in snap.cash_moves] == [(D(500), "deposit")]
     assert snap.skipped == 1  # the send
 
@@ -348,16 +360,19 @@ def test_coinbase_stops_paging_at_older_transactions():
         "/v2/accounts": {"data": [{"id": "a", "currency": "SOL", "balance": {"amount": "5", "currency": "SOL"}}]},
         "/v2/accounts/a/transactions": {"data": [tx("n1", "03-10"), tx("n2", "03-05")], "pagination": {"next_uri": "/p2"}},
         "/p2": {"data": [tx("n3", "03-02"), tx("old", "01-01")], "pagination": {"next_uri": "/p3"}},
+        "/api/v3/brokerage/orders/historical/fills": {"fills": []},
     }
     calls = []
 
     def get(path, params=None):
-        calls.append(path)
+        calls.append((path, params))
         return pages[path]
 
     with mock.patch.object(client, "get", side_effect=get):
         snap = client.snapshot(since=dt.date(2025, 3, 1))
-    assert "/p3" not in calls
+    assert "/p3" not in [path for path, _ in calls]
+    fills = next(params for path, params in calls if "fills" in path)
+    assert fills["start_sequence_timestamp"] == "2025-03-01T00:00:00Z"  # commissions are incremental too
     assert [t.ext_id for t in snap.trades] == ["coinbase:n1", "coinbase:n2", "coinbase:n3"]
 
 
@@ -451,3 +466,17 @@ def test_crypto_transfers_use_that_days_close(user, conn, no_network):
     assert (received.kind, received.quantity, received.price) == ("buy", D(4), D(90))
     conn.refresh_from_db()
     assert position(user, conn.account).quantity == 15
+
+
+def test_daily_fees_are_updated_not_duplicated(user, conn, no_network):
+    from connections.exchange_data import Fee
+
+    snap = snapshot()
+    snap.fees = [Fee("x:fee:SOL:2025-01-05", dt.date(2025, 1, 5), "SOL", D("0.50"))]
+    assert sync_exchange(conn, FakeExchange(snap))["fees"] == 1
+    snap.fees = [Fee("x:fee:SOL:2025-01-05", dt.date(2025, 1, 5), "SOL", D("0.80"))]  # more fills that day
+    assert sync_exchange(conn, FakeExchange(snap))["fees"] == 0
+    [fee] = Transaction.objects.filter(kind="fee")
+    assert fee.amount == D("0.80")
+    conn.refresh_from_db()
+    assert position(user, conn.account).fees_paid == D("0.80")

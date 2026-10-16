@@ -89,12 +89,14 @@ def _exists(account, ext_id) -> bool:
 
 
 def apply_snapshot(conn: ExchangeConnection, snap: Snapshot) -> dict:
-    report = {"trades": 0, "rewards": 0, "cash_flows": 0, "transfers": 0, "adjustments": 0, "skipped": snap.skipped}
+    report = {
+        "trades": 0, "rewards": 0, "cash_flows": 0, "transfers": 0, "fees": 0, "adjustments": 0, "skipped": snap.skipped,
+    }
     owner = conn.owner
     account = ensure_account(conn)
     symbols = (
         set(snap.balances) | {t.symbol for t in snap.trades} | {r.symbol for r in snap.rewards}
-        | {t.symbol for t in snap.transfers}
+        | {t.symbol for t in snap.transfers} | {f.symbol for f in snap.fees}
     )
     assets = {s: crypto_asset(owner, s) for s in symbols}
 
@@ -148,6 +150,17 @@ def apply_snapshot(conn: ExchangeConnection, snap: Snapshot) -> dict:
             )
             report["transfers"] += 1
 
+        for f in snap.fees:
+            # A day's total can grow until the day is over, so it's updated rather than skipped when present.
+            _, created = Transaction.objects.update_or_create(
+                account=account, external_id=f.ext_id,
+                defaults={
+                    "asset": assets[f.symbol], "date": f.date, "kind": TransactionKind.FEE, "amount": f.amount,
+                    "notes": "Comisiones de trading del día.",
+                },
+            )
+            report["fees"] += created
+
         for c in snap.cash_moves:
             if _exists(account, c.ext_id):
                 continue
@@ -181,7 +194,8 @@ def sync_exchange(conn: ExchangeConnection, client=None, full: bool = False) -> 
     except ExchangeError as exc:
         conn.last_error = str(exc)[:300]
         report = {
-            "trades": 0, "rewards": 0, "cash_flows": 0, "transfers": 0, "adjustments": 0, "skipped": 0, "error": str(exc),
+            "trades": 0, "rewards": 0, "cash_flows": 0, "transfers": 0, "fees": 0, "adjustments": 0, "skipped": 0,
+            "error": str(exc),
         }
     conn.save(update_fields=["last_synced_at", "last_error"])
     return report

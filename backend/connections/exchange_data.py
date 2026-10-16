@@ -47,6 +47,16 @@ class Transfer:
 
 
 @dataclass
+class Fee:
+    """Trading commissions paid on one day for one coin (USD). Re-sent on later syncs as the day fills up."""
+
+    ext_id: str
+    date: dt.date
+    symbol: str
+    amount: Decimal
+
+
+@dataclass
 class CashMove:
     ext_id: str
     date: dt.date
@@ -61,6 +71,7 @@ class Snapshot:
     rewards: list[Reward] = field(default_factory=list)
     cash_moves: list[CashMove] = field(default_factory=list)
     transfers: list[Transfer] = field(default_factory=list)
+    fees: list[Fee] = field(default_factory=list)
     skipped: int = 0  # events with no ledger equivalent (crypto transfers, non-USD pairs…)
 
     def add_balance(self, symbol: str, quantity: Decimal) -> None:
