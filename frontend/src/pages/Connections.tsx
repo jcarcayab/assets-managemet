@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, api } from '../api'
-import type { PlaidAccount, PlaidItem, PlaidStatus, SyncReport } from '../api'
+import type { ExchangeConnection, ExchangeReport, PlaidAccount, PlaidItem, PlaidStatus, SyncReport } from '../api'
+import { FormModal } from '../components/FormModal'
 import { useAccounts } from '../hooks'
 import { dateTime, money } from '../format'
 import { openPlaidLink, takePendingOAuth } from '../plaidLink'
@@ -147,6 +148,158 @@ function ItemCard({ item, refresh }: { item: PlaidItem; refresh: () => void }) {
   )
 }
 
+async function syncExchange(id: number): Promise<ExchangeReport> {
+  try {
+    return await api<ExchangeReport>(`/exchanges/${id}/sync/`, { method: 'POST' })
+  } catch (e) {
+    const report = e instanceof ApiError ? (e.data as ExchangeReport | null) : null
+    if (report?.error) return report
+    throw e
+  }
+}
+
+function ExchangeCard({ conn, refresh }: { conn: ExchangeConnection; refresh: () => void }) {
+  const qc = useQueryClient()
+  const accounts = useAccounts()
+  const [busy, setBusy] = useState(false)
+  const [report, setReport] = useState<ExchangeReport | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const name = conn.label || conn.provider_label
+
+  const run = async (action: () => Promise<void>) => {
+    setBusy(true)
+    setError(null)
+    try {
+      await action()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+      qc.invalidateQueries()
+      refresh()
+    }
+  }
+
+  const remove = () => {
+    if (!window.confirm(`¿Olvidar las llaves de ${name}? La cuenta y el historial se conservan.`)) return
+    run(() => api(`/exchanges/${conn.id}/`, { method: 'DELETE' }))
+  }
+
+  const setAccount = (value: string) =>
+    run(() => api(`/exchanges/${conn.id}/`, { method: 'PATCH', body: { account: value ? Number(value) : null } }))
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>
+          {name}{' '}
+          <span className="muted small">
+            · llave …{conn.key_hint} ·{' '}
+            {conn.last_synced_at ? `sincronizada ${dateTime(conn.last_synced_at)}` : 'sin sincronizar'}
+          </span>
+        </h2>
+        <div className="actions">
+          <button className="btn primary" disabled={busy} onClick={() => run(async () => setReport(await syncExchange(conn.id)))}>
+            {busy ? 'Sincronizando…' : 'Sincronizar'}
+          </button>
+          <button className="btn danger" disabled={busy} onClick={remove}>
+            Quitar
+          </button>
+        </div>
+      </div>
+      {conn.last_error && <p className="error small">{conn.last_error}</p>}
+      {error && <p className="error">{error}</p>}
+      {report && !report.error && (
+        <p className="pos small">
+          {report.trades} trades, {report.rewards} recompensas de staking y {report.cash_flows} depósitos nuevos;{' '}
+          {report.adjustments} ajustes de conciliación
+          {report.skipped ? ` (${report.skipped} movimientos sin costo, como transferencias entre wallets)` : ''}.
+        </p>
+      )}
+      <div className="form-grid">
+        <label>
+          <span>Se refleja en</span>
+          <select value={conn.account ?? ''} onChange={(e) => setAccount(e.target.value)} disabled={busy}>
+            <option value="">{conn.account_name ? `→ ${conn.account_name}` : 'Crear cuenta nueva al sincronizar'}</option>
+            {(accounts.data ?? [])
+              .filter((a) => a.id !== conn.account)
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  Usar “{a.name}”
+                </option>
+              ))}
+          </select>
+        </label>
+      </div>
+    </div>
+  )
+}
+
+const KEY_HELP = (
+  <div className="muted small key-help">
+    <p>
+      <strong>Coinbase:</strong> portal.cdp.coinbase.com → API Keys → Create API key → permiso solo <em>View</em> (sin Trade ni
+      Transfer), algoritmo ECDSA. API key = el nombre <code>organizations/…/apiKeys/…</code>; secreto = la llave privada.
+    </p>
+    <p>
+      <strong>Kraken:</strong> Settings → API → Create API key → marca solo <em>Query Funds</em>,{' '}
+      <em>Query Closed Orders &amp; Trades</em> y <em>Query Ledger Entries</em>. Nada de Deposit, Withdraw ni Trade.
+    </p>
+  </div>
+)
+
+function ExchangesSection() {
+  const conns = useQuery({ queryKey: ['exchanges'], queryFn: () => api<ExchangeConnection[]>('/exchanges/') })
+  const [adding, setAdding] = useState(false)
+
+  return (
+    <>
+      <div className="page-head mt">
+        <h2>Exchanges de crypto</h2>
+        <button className="btn primary" onClick={() => setAdding(true)}>
+          + Conectar exchange
+        </button>
+      </div>
+      <p className="muted small">
+        Coinbase y Kraken con llaves de <strong>solo lectura</strong>: importan trades, recompensas de staking y depósitos, y
+        cuadran con tus saldos (se sincroniza a diario). Las llaves se guardan cifradas y nunca se muestran. Lo que llega por
+        transferencia desde otra wallet no trae su costo original: esas unidades se registran al precio actual.
+      </p>
+      {conns.data?.length === 0 && <p className="empty">Ningún exchange conectado.</p>}
+      {conns.data?.map((c) => (
+        <ExchangeCard key={c.id} conn={c} refresh={() => conns.refetch()} />
+      ))}
+      {adding && (
+        <FormModal
+          title="Conectar exchange (solo lectura)"
+          fields={[
+            {
+              name: 'provider',
+              label: 'Exchange',
+              type: 'select',
+              required: true,
+              options: [
+                { value: 'kraken', label: 'Kraken' },
+                { value: 'coinbase', label: 'Coinbase' },
+              ],
+            },
+            { name: 'label', label: 'Nombre (opcional)', help: 'Ej. Kraken personal' },
+            { name: 'api_key', label: 'API key', required: true },
+            { name: 'api_secret', label: 'Secreto / llave privada', type: 'textarea', required: true },
+          ]}
+          initial={{ provider: 'kraken', label: '', api_key: '', api_secret: '' }}
+          footer={KEY_HELP}
+          onSubmit={async (body) => {
+            await api('/exchanges/', { body })
+            conns.refetch()
+          }}
+          onClose={() => setAdding(false)}
+        />
+      )}
+    </>
+  )
+}
+
 export default function Connections() {
   const status = useQuery({ queryKey: ['plaid-status'], queryFn: () => api<PlaidStatus>('/plaid/status/') })
   const items = useQuery({ queryKey: ['plaid-items'], queryFn: () => api<PlaidItem[]>('/plaid/items/') })
@@ -220,6 +373,8 @@ export default function Connections() {
       {items.data?.map((item) => (
         <ItemCard key={item.id} item={item} refresh={() => items.refetch()} />
       ))}
+
+      <ExchangesSection />
     </section>
   )
 }

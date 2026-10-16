@@ -5,7 +5,10 @@ from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
-from connections.models import PlaidAccount, PlaidItem
+from connections.exchange_data import ExchangeError
+from connections.exchange_sync import client_for as exchange_client_for
+from connections.exchange_sync import sync_exchange
+from connections.models import ExchangeConnection, ExchangeProvider, PlaidAccount, PlaidItem
 from connections.plaid import PlaidError, configured, get_client
 from connections.sync import link_item, sync_item
 from portfolio.models import Account
@@ -128,6 +131,73 @@ class SyncView(PlaidAPIView):
         if not self.client:
             return self.not_configured()
         report = sync_item(self.item(request, pk), self.client)
+        return Response(report, status=status.HTTP_502_BAD_GATEWAY if report["error"] else status.HTTP_200_OK)
+
+
+class ExchangeSerializer(serializers.ModelSerializer):
+    provider_label = serializers.CharField(source="get_provider_display", read_only=True)
+    account = serializers.PrimaryKeyRelatedField(queryset=Account.objects.all(), allow_null=True, required=False)
+    account_name = serializers.CharField(source="account.name", read_only=True, default=None)
+
+    class Meta:
+        model = ExchangeConnection
+        fields = [
+            "id", "provider", "provider_label", "label", "key_hint", "account", "account_name", "created_at",
+            "last_synced_at", "last_error",
+        ]
+        read_only_fields = ["provider", "key_hint", "created_at", "last_synced_at", "last_error"]
+
+    def validate_account(self, value):
+        if value is not None and value.owner_id != self.context["request"].user.id:
+            raise serializers.ValidationError("Cuenta no encontrada.")
+        return value
+
+
+class ExchangeConnectionListView(APIView):
+    throttle_classes = [PlaidThrottle]
+
+    def get(self, request):
+        conns = ExchangeConnection.objects.filter(owner=request.user).select_related("account")
+        return Response(ExchangeSerializer(conns, many=True, context={"request": request}).data)
+
+    def post(self, request):
+        """Store read-only credentials after checking them against the exchange. They're never returned."""
+        provider = request.data.get("provider")
+        key, secret = (request.data.get("api_key") or "").strip(), (request.data.get("api_secret") or "").strip()
+        if provider not in ExchangeProvider.values or not key or not secret:
+            return Response({"detail": "Indica exchange, API key y secreto."}, status=status.HTTP_400_BAD_REQUEST)
+        conn = ExchangeConnection(owner=request.user, provider=provider, label=(request.data.get("label") or "")[:60])
+        conn.set_credentials(key, secret)
+        try:
+            exchange_client_for(conn).check()
+        except ExchangeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        conn.save()
+        return Response(ExchangeSerializer(conn, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+
+class ExchangeConnectionView(APIView):
+    def conn(self, request, pk) -> ExchangeConnection:
+        return get_object_or_404(ExchangeConnection, pk=pk, owner=request.user)
+
+    def patch(self, request, pk):
+        ser = ExchangeSerializer(self.conn(request, pk), data=request.data, partial=True, context={"request": request})
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data)
+
+    def delete(self, request, pk):
+        """Forget the credentials. The account and its history stay."""
+        self.conn(request, pk).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ExchangeConnectionSyncView(APIView):
+    throttle_classes = [PlaidThrottle]
+
+    def post(self, request, pk):
+        conn = get_object_or_404(ExchangeConnection, pk=pk, owner=request.user)
+        report = sync_exchange(conn)
         return Response(report, status=status.HTTP_502_BAD_GATEWAY if report["error"] else status.HTTP_200_OK)
 
 

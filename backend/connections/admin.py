@@ -1,6 +1,18 @@
 from django.contrib import admin
 
-from connections.models import PlaidAccount, PlaidItem
+from connections.models import ExchangeConnection, PlaidAccount, PlaidItem
+
+
+@admin.register(ExchangeConnection)
+class ExchangeConnectionAdmin(admin.ModelAdmin):
+    """API keys are never displayed."""
+
+    list_display = ["provider", "label", "owner", "key_hint", "last_synced_at", "last_error"]
+    fields = ["owner", "provider", "label", "key_hint", "account", "created_at", "last_synced_at", "last_error"]
+    readonly_fields = ["owner", "provider", "key_hint", "created_at", "last_synced_at", "last_error"]
+
+    def has_add_permission(self, request):
+        return False
 
 
 class PlaidAccountInline(admin.TabularInline):

@@ -33,6 +33,48 @@ class PlaidItem(models.Model):
         self.access_token_encrypted = encrypt(value)
 
 
+class ExchangeProvider(models.TextChoices):
+    COINBASE = "coinbase", "Coinbase"
+    KRAKEN = "kraken", "Kraken"
+
+
+class ExchangeConnection(models.Model):
+    """Read-only API credentials for a crypto exchange, mirrored into one portfolio account."""
+
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="exchange_connections")
+    provider = models.CharField(max_length=20, choices=ExchangeProvider.choices)
+    label = models.CharField(max_length=60, blank=True)
+    api_key_encrypted = models.TextField()
+    api_secret_encrypted = models.TextField()
+    key_hint = models.CharField(max_length=12, blank=True, help_text="Final de la llave, para reconocerla.")
+    account = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True, related_name="exchange_links",
+        help_text="Cuenta del portafolio que refleja el exchange. Vacía = se crea una al sincronizar.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=300, blank=True)
+
+    class Meta:
+        ordering = ["provider", "id"]
+
+    def __str__(self):
+        return self.label or self.get_provider_display()
+
+    @property
+    def api_key(self) -> str:
+        return decrypt(self.api_key_encrypted)
+
+    @property
+    def api_secret(self) -> str:
+        return decrypt(self.api_secret_encrypted)
+
+    def set_credentials(self, key: str, secret: str) -> None:
+        self.api_key_encrypted = encrypt(key)
+        self.api_secret_encrypted = encrypt(secret)
+        self.key_hint = key.strip()[-6:]
+
+
 class PlaidAccount(models.Model):
     """An account inside a Plaid item, mapped to one of our portfolio accounts."""
 
