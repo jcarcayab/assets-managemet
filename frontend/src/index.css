@@ -2,16 +2,27 @@
   --bg: #f6f7f9;
   --surface: #ffffff;
   --text: #0f172a;
-  --muted: #64748b;
+  --muted: #556377;
   --border: #e2e8f0;
+  --border-strong: #7c8ba1;
   --grid: #e2e8f0;
   --accent: #0f766e;
   --accent-soft: #ccfbf1;
   --pos: #15803d;
   --neg: #b91c1c;
   --warn-soft: #fef3c7;
+  --sell-text: #b45309;
+  --illiquid: #94a3b8;
   --shadow: 0 1px 2px rgb(15 23 42 / 0.06), 0 1px 3px rgb(15 23 42 / 0.04);
   --radius: 12px;
+
+  /* Type scale at the 15px root: 11.25 / 12 / 13.5 / 15 / 18 / 24 px */
+  --fs-2xs: 0.75rem;
+  --fs-xs: 0.8rem;
+  --fs-sm: 0.9rem;
+  --fs-md: 1rem;
+  --fs-lg: 1.2rem;
+  --fs-xl: 1.6rem;
 
   color-scheme: light;
   font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -28,13 +39,15 @@
     --surface: #111827;
     --text: #e5e7eb;
     --muted: #94a3b8;
-    --border: #1f2937;
+    --border: #273244;
+    --border-strong: #64748b;
     --grid: #1f2937;
     --accent: #2dd4bf;
     --accent-soft: #134e4a;
     --pos: #4ade80;
     --neg: #f87171;
     --warn-soft: #422006;
+    --sell-text: #fbbf24;
     --shadow: none;
     color-scheme: dark;
   }
@@ -51,13 +64,13 @@ body {
 }
 
 h1 {
-  font-size: 1.5rem;
+  font-size: var(--fs-xl);
   margin: 0;
   letter-spacing: -0.01em;
 }
 
 h2 {
-  font-size: 0.95rem;
+  font-size: var(--fs-md);
   margin: 0 0 0.75rem;
   font-weight: 600;
 }
@@ -95,7 +108,7 @@ code {
   align-items: center;
   gap: 0.5rem;
   font-weight: 700;
-  font-size: 1.1rem;
+  font-size: var(--fs-lg);
   padding: 0 0.5rem 1rem;
 }
 
@@ -107,7 +120,7 @@ code {
   border-radius: 8px;
   background: var(--accent);
   color: var(--surface);
-  font-size: 0.9rem;
+  font-size: var(--fs-sm);
 }
 
 .sidebar nav {
@@ -223,21 +236,21 @@ details.card[open] summary {
 
 .kpi-label {
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: var(--fs-xs);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
 .kpi-value {
-  font-size: 1.6rem;
+  font-size: var(--fs-xl);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
 }
 
 .kpi-sub {
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-xs);
 }
 
 .stats {
@@ -310,7 +323,7 @@ details.card[open] summary {
 }
 
 .illiquid {
-  background: #94a3b8;
+  background: var(--illiquid);
 }
 
 .split-legend {
@@ -318,7 +331,7 @@ details.card[open] summary {
   flex-wrap: wrap;
   gap: 0.25rem 1rem;
   margin-top: 0.5rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-xs);
   color: var(--muted);
 }
 
@@ -373,7 +386,7 @@ details.card[open] summary {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9rem;
+  font-size: var(--fs-sm);
 }
 
 th,
@@ -385,7 +398,7 @@ td {
 }
 
 th {
-  font-size: 0.75rem;
+  font-size: var(--fs-2xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
@@ -433,7 +446,7 @@ td.hit.neg {
 
 .tag {
   display: inline-block;
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   padding: 0.1rem 0.45rem;
   border-radius: 99px;
@@ -449,7 +462,7 @@ td.hit.neg {
 
 .tag.sell {
   background: var(--warn-soft);
-  color: #b45309;
+  color: var(--sell-text);
 }
 
 /* -- text ----------------------------------------------------------------------------------------- */
@@ -460,7 +473,7 @@ td.hit.neg {
 
 .small,
 small {
-  font-size: 0.82rem;
+  font-size: var(--fs-xs);
 }
 
 .pos {
@@ -498,7 +511,7 @@ textarea {
   gap: 0.35rem;
   padding: 0.5rem 0.9rem;
   border-radius: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   background: var(--surface);
   font-weight: 500;
   cursor: pointer;
@@ -564,7 +577,7 @@ select,
 textarea {
   width: 100%;
   padding: 0.5rem 0.65rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   background: var(--surface);
   min-height: 38px;
@@ -621,7 +634,7 @@ button:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-sm);
   font-weight: 500;
 }
 
@@ -681,7 +694,7 @@ button:focus-visible {
 
 .modal-head h2 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: var(--fs-lg);
 }
 
 .modal-foot {
@@ -731,7 +744,7 @@ button:focus-visible {
   margin: 0;
   padding-left: 1.2rem;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: var(--fs-sm);
 }
 
 .qr {
@@ -755,7 +768,7 @@ button:focus-visible {
 }
 
 .code-input input {
-  font-size: 1.4rem;
+  font-size: var(--fs-xl);
   letter-spacing: 0.3em;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -780,7 +793,7 @@ button:focus-visible {
   display: block;
   text-align: center;
   padding: 0.35rem;
-  font-size: 0.95rem;
+  font-size: var(--fs-md);
 }
 
 /* -- mobile --------------------------------------------------------------------------------------- */
@@ -802,7 +815,7 @@ button:focus-visible {
 
   .brand {
     padding: 0 1rem 0.4rem;
-    font-size: 1rem;
+    font-size: var(--fs-md);
   }
 
   .sidebar nav {
@@ -825,7 +838,7 @@ button:focus-visible {
   }
 
   h1 {
-    font-size: 1.3rem;
+    font-size: var(--fs-lg);
   }
 
   .hide-sm {
@@ -843,7 +856,7 @@ button:focus-visible {
   }
 
   .kpi-value {
-    font-size: 1.2rem;
+    font-size: var(--fs-lg);
   }
 
   .form-grid {
