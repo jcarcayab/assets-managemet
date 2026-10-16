@@ -598,3 +598,13 @@ class UserSettings(models.Model):
     def for_user(cls, user) -> "UserSettings":
         obj, _ = cls.objects.get_or_create(owner=user)
         return obj
+
+
+class CacheVersion(models.Model):
+    """A counter bumped whenever cached data changes (shared by the web and scheduler processes)."""
+
+    name = models.CharField(max_length=40, primary_key=True)
+    value = models.BigIntegerField(default=0)
+
+    def __str__(self):
+        return f"{self.name}={self.value}"
