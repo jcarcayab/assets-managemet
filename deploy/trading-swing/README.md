@@ -50,6 +50,17 @@ Check the SHA-256 fingerprint before trusting it:
 `11:CF:40:04:0C:6D:7F:93:26:47:9F:CD:FE:0D:DD:4A:8A:8F:F4:53:39:8E:9B:A5:BC:E0:C4:0B:92:F4:91:44`.
 Removing the `patrimonio_caddy-data` volume creates a new CA, and every device must trust it again.
 
+## Install as an app (iPad, iPhone, Mac)
+
+Patrimonio is a PWA: no App Store. With the VPN on and the certificate trusted (above):
+
+- **iPad / iPhone:** open `https://10.8.0.1:8443` in **Safari** → Share → *Add to Home Screen*. It opens
+  fullscreen with its own icon. (Only Safari can install it on iOS.)
+- **Mac:** Safari → File → *Add to Dock*, or Chrome/Edge → the install icon in the address bar.
+
+The installed app caches only the interface (JS, CSS, fonts), so it opens instantly; the data always comes
+from the server, so it still needs the VPN. New versions install themselves on the next launch after a deploy.
+
 ## Operations
 
 ```bash
