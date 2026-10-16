@@ -1,10 +1,14 @@
 """Derive current holdings from the transaction ledger (average-cost method) and aggregate them."""
 
 import datetime as dt
+import threading
+import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 
+from django.db import connection
+from django.db.models import Count, F, Max
 from django.utils import timezone
 
 from portfolio.models import (
@@ -12,6 +16,7 @@ from portfolio.models import (
     AllocationTarget,
     Asset,
     AssetClass,
+    CacheVersion,
     CashFlow,
     EquityGrant,
     GrantType,
@@ -212,18 +217,88 @@ def ledger_transactions(user):
     )
 
 
-def compute_positions(user, include_closed: bool = False) -> list[Position]:
-    targets = {
-        (t.account_id, t.asset_id): t.target_pct
-        for t in AllocationTarget.objects.filter(account__owner=user)
-    }
-    ledger = Ledger(user, targets)
+# -- cached ledger replay --------------------------------------------------------------------------
+# Replaying every transaction is the slow part of computing positions (seconds with tens of thousands of
+# synced trades), and it only changes when transactions or accounts do. The replayed quantities, costs and
+# lots are cached per user; prices, asset and account details and targets are always read fresh.
+
+LEDGER_VERSION = "ledger"
+CACHE_TTL_SECONDS = 3600  # safety net for changes that bypass signals (e.g. QuerySet.update in a shell)
+_replay_cache: dict[int, tuple[tuple, float, list["Position"]]] = {}
+_replay_lock = threading.Lock()
+
+
+def bump_ledger_version(**_) -> None:
+    if not CacheVersion.objects.filter(name=LEDGER_VERSION).update(value=F("value") + 1):
+        CacheVersion.objects.get_or_create(name=LEDGER_VERSION, defaults={"value": 1})
+
+
+def ledger_version(user) -> tuple:
+    """Changes whenever the replay could: the bump counter, plus row count and last id as a backstop."""
+    counter = CacheVersion.objects.filter(name=LEDGER_VERSION).values_list("value", flat=True).first() or 0
+    rows = Transaction.objects.filter(account__owner=user).aggregate(n=Count("id"), last=Max("id"))
+    return counter, rows["n"], rows["last"]
+
+
+def clear_replay_cache() -> None:
+    with _replay_lock:
+        _replay_cache.clear()
+
+
+def _clone(p: "Position") -> "Position":
+    return replace(
+        p, lots=[Lot(lot.date, lot.quantity, lot.unit_cost) for lot in p.lots], exposures=dict(p.exposures),
+        extra=dict(p.extra),
+    )
+
+
+def _replay(user) -> list["Position"]:
+    ledger = Ledger(user)
     for tx in ledger_transactions(user):
         if tx.to_account_id and tx.to_account.archived:
             continue
         ledger.apply(tx)
+    return list(ledger.positions.values())
 
-    positions = [p for p in ledger.positions.values() if include_closed or p.quantity != 0]
+
+def _refresh(user, positions: list["Position"]) -> list["Position"] | None:
+    """Point cached positions at today's assets, accounts and targets. None if something they need is gone."""
+    assets = {a.id: a for a in Asset.objects.filter(owner=user)}
+    accounts = {a.id: a for a in Account.objects.filter(owner=user)}
+    targets = {(t.account_id, t.asset_id): t.target_pct for t in AllocationTarget.objects.filter(account__owner=user)}
+    for p in positions:
+        asset, account = assets.get(p.asset.id), accounts.get(p.account.id)
+        if asset is None or account is None:
+            return None
+        p.asset, p.account = asset, account
+        p.symbol, p.name, p.asset_class, p.price = asset.symbol, asset.name, asset.asset_class, asset.price
+        p.underlying, p.sector, p.exposures = asset.underlying, asset.sector, asset.exposure_breakdown()
+        p.target_pct = targets.get((account.id, asset.id))
+    return positions
+
+
+def replayed_positions(user) -> list["Position"]:
+    """Every (account, asset) position from the ledger, closed ones included; cached between requests.
+
+    Inside a database transaction (syncs, reconciliation) the cache is skipped: rows written in that
+    transaction aren't visible to the version check from other processes, and must always be counted."""
+    if connection.in_atomic_block:
+        return _refresh(user, _replay(user))
+    key = ledger_version(user)
+    with _replay_lock:
+        hit = _replay_cache.get(user.pk)
+    if hit and hit[0] == key and time.monotonic() - hit[1] < CACHE_TTL_SECONDS:
+        refreshed = _refresh(user, [_clone(p) for p in hit[2]])
+        if refreshed is not None:
+            return refreshed
+    positions = _replay(user)
+    with _replay_lock:
+        _replay_cache[user.pk] = (key, time.monotonic(), [_clone(p) for p in positions])
+    return _refresh(user, positions)
+
+
+def compute_positions(user, include_closed: bool = False) -> list[Position]:
+    positions = [p for p in replayed_positions(user) if include_closed or p.quantity != 0]
 
     grants = EquityGrant.objects.filter(account__owner=user, account__archived=False)
     for grant in grants.select_related("account").prefetch_related("exercises"):
