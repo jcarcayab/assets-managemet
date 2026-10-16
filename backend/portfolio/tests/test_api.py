@@ -96,3 +96,15 @@ def test_transactions_paginate_only_when_asked(api, broker, voo):
     assert [t["date"] for t in page["results"]] == ["2025-01-03", "2025-01-02"]  # newest first
     assert page["next"] and page["previous"]
     assert api.get("/api/cash-flows/?page=1").json()["count"] == 0
+
+
+def test_movimientos_filters(api, broker, voo):
+    buy(broker, voo, 1, 100, day=1)
+    buy(broker, voo, 1, 110, day=2, kind="sell")
+    api.post("/api/cash-flows/", {"account": broker.id, "kind": "deposit", "date": "2025-01-01", "amount": "500"}, format="json")
+    api.post("/api/cash-flows/", {"account": broker.id, "kind": "withdrawal", "date": "2025-01-02", "amount": "50"}, format="json")
+
+    sells = api.get(f"/api/transactions/?asset={voo.id}&kind=sell&page=1").json()
+    assert sells["count"] == 1 and sells["results"][0]["kind"] == "sell"
+    withdrawals = api.get("/api/cash-flows/?kind=withdrawal&page=1").json()
+    assert [c["kind"] for c in withdrawals["results"]] == ["withdrawal"]

@@ -34,18 +34,25 @@ function detail(r: Transaction) {
 export default function Transactions() {
   const [tab, setTab] = useState<'trades' | 'flows'>('trades')
   const [account, setAccount] = useState('')
+  const [asset, setAsset] = useState('')
+  const [kind, setKind] = useState('')
   const accounts = useAccounts()
   const assets = useAssets()
   const choices = useChoices()
 
   const accountOptions = (accounts.data ?? []).map((a) => ({ value: String(a.id), label: a.name }))
   const assetOptions = (assets.data ?? []).map((a) => ({ value: String(a.id), label: `${a.symbol} — ${a.name}` }))
-  const query = account ? `?account=${account}` : ''
+  const kindOptions = (tab === 'trades' ? choices.data?.transaction_kinds : choices.data?.cash_flow_kinds) ?? []
+  const params = new URLSearchParams()
+  if (account) params.set('account', account)
+  if (tab === 'trades' && asset) params.set('asset', asset)
+  if (kind) params.set('kind', kind)
+  const query = params.toString() ? `?${params}` : ''
 
-  const filter = (
-    <select value={account} onChange={(e) => setAccount(e.target.value)} aria-label="Filtrar por cuenta">
-      <option value="">Todas las cuentas</option>
-      {accountOptions.map((o) => (
+  const select = (label: string, value: string, set: (v: string) => void, options: { value: string; label: string }[]) => (
+    <select value={value} onChange={(e) => set(e.target.value)} aria-label={`Filtrar por ${label.toLowerCase()}`}>
+      <option value="">{label}: todos</option>
+      {options.map((o) => (
         <option key={o.value} value={o.value}>
           {o.label}
         </option>
@@ -53,12 +60,25 @@ export default function Transactions() {
     </select>
   )
 
+  const filter = (
+    <>
+      {select('Cuenta', account, setAccount, accountOptions)}
+      {tab === 'trades' && select('Activo', asset, setAsset, assetOptions)}
+      {select('Tipo', kind, setKind, kindOptions)}
+    </>
+  )
+
+  const switchTab = (next: 'trades' | 'flows') => {
+    setTab(next)
+    setKind('') // transaction and cash-flow kinds are different lists
+  }
+
   const tabs = (
     <div className="tabs" role="tablist">
-      <button role="tab" aria-selected={tab === 'trades'} onClick={() => setTab('trades')}>
+      <button role="tab" aria-selected={tab === 'trades'} onClick={() => switchTab('trades')}>
         Operaciones
       </button>
-      <button role="tab" aria-selected={tab === 'flows'} onClick={() => setTab('flows')}>
+      <button role="tab" aria-selected={tab === 'flows'} onClick={() => switchTab('flows')}>
         Depósitos / retiros
       </button>
     </div>

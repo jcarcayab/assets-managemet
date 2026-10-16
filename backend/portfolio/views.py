@@ -121,7 +121,7 @@ class CashFlowViewSet(OwnedViewSet):
     serializer_class = CashFlowSerializer
     pagination_class = OptionalPagination
     owner_path = "account__owner"
-    filter_params = ("account",)
+    filter_params = ("account", "kind")
 
 
 class AllocationTargetViewSet(OwnedViewSet):
