@@ -197,6 +197,8 @@ COINBASE = {
         _cb_tx("t3", "staking_reward", "0.5", 60),
         _cb_tx("t4", "send", -1, -150),
         _cb_tx("t5", "buy", 1, 100, status="pending"),
+        _cb_tx("t6", "send", 4, 560),
+        _cb_tx("t7", "staking_transfer", -3, -420),
     ]},
     "/v2/accounts/a-usd/transactions": {"data": [
         _cb_tx("u1", "fiat_deposit", 500, 500, currency="USD"),
@@ -210,7 +212,11 @@ def test_coinbase_snapshot_maps_transactions():
     with mock.patch.object(client, "get", side_effect=lambda path, params=None: COINBASE[path]):
         snap = client.snapshot()
     assert snap.balances == {"SOL": D(12), "USD": D(25)}
-    assert [(t.side, t.quantity, t.price) for t in snap.trades] == [("buy", D(10), D(100)), ("sell", D(2), D(150))]
+    # Sends in and out of Coinbase move the units at that day's market value; internal wallet moves are skipped.
+    assert [(t.side, t.quantity, t.price) for t in snap.trades] == [
+        ("buy", D(10), D(100)), ("sell", D(2), D(150)), ("sell", D(1), D(150)), ("buy", D(4), D(140)),
+    ]
+    assert snap.skipped == 1
     [reward] = snap.rewards
     assert (reward.quantity, reward.value) == (D("0.5"), D(60))
     assert [(c.amount, c.kind) for c in snap.cash_moves] == [(D(500), "deposit")]
