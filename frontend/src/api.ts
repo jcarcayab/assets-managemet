@@ -590,9 +590,6 @@ export type Snapshot = {
 }
 
 export type Settings = {
-  take_profit_1_pct: number
-  take_profit_2_pct: number
-  stop_loss_pct: number
   current_age: number
   retirement_age: number
   annual_return_pct: number
