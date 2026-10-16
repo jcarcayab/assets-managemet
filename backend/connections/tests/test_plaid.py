@@ -189,6 +189,25 @@ def test_sold_position_bought_before_history_uses_first_known_price(user, item):
     assert not any(p.symbol == "VOO" for p in compute_positions(user) if p.account == broker)
 
 
+@pytest.mark.parametrize(
+    "institution, name, mask, expected",
+    [
+        ("Robinhood", "Robinhood Credit Card **2114", "2114", "Robinhood Credit Card ····2114"),
+        ("Robinhood", "Robinhood individual", "", "Robinhood individual"),
+        ("Fidelity", "Brokerage", "1234", "Fidelity Brokerage ····1234"),
+        ("Chase", "Freedom Card ...4444", "4444", "Chase Freedom Card ····4444"),
+        ("Amex", "Gold xx1001", "1001", "Amex Gold ····1001"),
+    ],
+)
+def test_display_names_dont_repeat_bank_or_digits(institution, name, mask, expected):
+    from types import SimpleNamespace
+
+    from connections.sync import display_name
+
+    pa = SimpleNamespace(name=name, mask=mask, item=SimpleNamespace(institution_name=institution))
+    assert display_name(pa) == expected
+
+
 def test_credit_cards_become_debts_and_follow_the_balance(user, item):
     report = sync_item(item, FakePlaid())
     assert report["liabilities"] == 1

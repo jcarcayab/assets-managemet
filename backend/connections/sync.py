@@ -12,6 +12,7 @@ Both adjustments are recomputed from scratch on every sync, so they never pile u
 """
 
 import datetime as dt
+import re
 from decimal import Decimal
 
 from django.db import transaction as db_tx
@@ -128,6 +129,18 @@ LIABILITY_KINDS = {
 }
 
 
+def display_name(pa: PlaidAccount) -> str:
+    """'Robinhood Credit Card **2114' -> 'Robinhood Credit Card ····2114': the institution is prefixed only when
+    the name doesn't already include it, and the last digits appear once."""
+    institution = pa.item.institution_name or "Plaid"
+    name = pa.name.strip()
+    if pa.mask:
+        name = re.sub(rf"[\s\-]*(?:\*+|\.+|·+|x+|#)?\s*{re.escape(pa.mask)}\s*$", "", name, flags=re.IGNORECASE).strip()
+    if institution.lower() not in name.lower():
+        name = f"{institution} {name}".strip()
+    return (f"{name} ····{pa.mask}" if pa.mask else name)[:100]
+
+
 def ensure_liability(pa: PlaidAccount) -> Liability | None:
     """The debt mirroring this credit card / loan, created on first sync unless one was chosen."""
     if not pa.enabled or pa.type not in ("credit", "loan"):
@@ -135,9 +148,8 @@ def ensure_liability(pa: PlaidAccount) -> Liability | None:
     if pa.liability_id:
         return pa.liability
     kind = LIABILITY_KINDS.get(pa.subtype, LiabilityKind.CREDIT_CARD if pa.type == "credit" else LiabilityKind.PERSONAL)
-    name = f"{pa.item.institution_name or 'Plaid'} {pa.name}" + (f" ····{pa.mask}" if pa.mask else "")
     pa.liability = Liability.objects.create(
-        owner=pa.item.owner, name=name[:100], kind=kind, balance=Decimal(0), notes="Sincronizada con Plaid."
+        owner=pa.item.owner, name=display_name(pa), kind=kind, balance=Decimal(0), notes="Sincronizada con Plaid."
     )
     pa.save(update_fields=["liability"])
     return pa.liability
@@ -187,8 +199,8 @@ def ensure_account(pa: PlaidAccount) -> Account | None:
         return pa.account
     owner = pa.item.owner
     kind, tax = account_kind(pa.type, pa.subtype)
-    base = f"{pa.item.institution_name or 'Plaid'} {pa.name}" + (f" ····{pa.mask}" if pa.mask else "")
-    name, n = base[:95], 2
+    base = display_name(pa)[:95]
+    name, n = base, 2
     while Account.objects.filter(owner=owner, name=name).exists():
         name, n = f"{base[:90]} ({n})", n + 1
     pa.account = Account.objects.create(
