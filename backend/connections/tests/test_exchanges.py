@@ -254,7 +254,8 @@ def test_sync_records_history_and_reconciles(user, conn, no_network):
     assert sol.quantity == 12
     assert sol.asset.sector == "Crypto"
     opening = Transaction.objects.get(account=account, external_id=f"exchange-adj:open:{sol.asset.id}")
-    assert (opening.date, opening.quantity, opening.price) == (dt.date(2025, 1, 4), D("3.5"), D(150))
+    # No reported cost: estimated with the earliest known price (the first buy at 100), not today's 150.
+    assert (opening.date, opening.quantity, opening.price) == (dt.date(2025, 1, 4), D("3.5"), D(100))
     reward = Transaction.objects.get(external_id="x:r1")
     assert (reward.kind, reward.price) == ("staking", D(120))  # $60 for 0.5 SOL
     assert position(user, account, "USD").quantity == 25

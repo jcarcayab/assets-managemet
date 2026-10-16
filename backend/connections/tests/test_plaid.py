@@ -147,6 +147,40 @@ def test_sync_is_idempotent_and_follows_the_broker(user, item):
     assert holding(user, "····1234", "VOO").quantity == 12
 
 
+def test_cash_transfers_become_deposits_and_withdrawals(user, item):
+    from connections.sync import apply_transaction
+
+    sync_item(item, FakePlaid())
+    broker = Account.objects.get(owner=user, name="Fidelity Brokerage ····1234")
+    base = {"account_id": "inv1", "security_id": None, "type": "transfer", "subtype": "transfer", "quantity": 0, "price": 0}
+    deposit = {**base, "investment_transaction_id": "x-in", "date": "2025-09-01", "amount": -20}
+    withdrawal = {**base, "investment_transaction_id": "x-out", "date": "2025-09-02", "amount": 15}
+    assert apply_transaction(deposit, broker, {}) == "flow"
+    assert apply_transaction(withdrawal, broker, {}) == "flow"
+    flows = {f.external_id: (f.kind, f.amount) for f in CashFlow.objects.filter(account=broker)}
+    assert flows["plaid:x-in"] == ("deposit", 20)
+    assert flows["plaid:x-out"] == ("withdrawal", -15)
+
+
+def test_sold_position_bought_before_history_uses_first_known_price(user, item):
+    # VOO bought before the available history and sold entirely within it: no holding, no reported cost.
+    class SoldOut(FakePlaid):
+        def get_holdings(self, access_token):
+            data = holdings()
+            data["holdings"] = [h for h in data["holdings"] if h["security_id"] != "sec-voo"]
+            return data
+
+        def get_investment_transactions(self, access_token, start, end):
+            sell_all = {**TRANSACTIONS[2], "investment_transaction_id": "t-sell-all", "quantity": -20, "price": 450}
+            return {"investment_transactions": [TRANSACTIONS[1], sell_all], "securities": SECURITIES}
+
+    sync_item(item, SoldOut())
+    broker = Account.objects.get(owner=user, name="Fidelity Brokerage ····1234")
+    opening = Transaction.objects.get(account=broker, external_id__startswith="plaid-adj:open")
+    assert (opening.quantity, opening.price) == (10, 400)  # the first buy's price, not $0
+    assert not any(p.symbol == "VOO" for p in compute_positions(user) if p.account == broker)
+
+
 def test_existing_ticker_asset_is_reused(user, item, voo):
     sync_item(item, FakePlaid())
     assert Asset.objects.filter(owner=user, symbol="VOO").count() == 1

@@ -220,7 +220,13 @@ def apply_transaction(t: dict, account: Account, securities: dict) -> str | None
             flow = CashFlowKind.WITHDRAWAL if subtype in WITHDRAWAL_SUBTYPES else CashFlowKind.DEPOSIT
             CashFlow.objects.create(account=account, kind=flow, date=date, amount=amount, external_id=ext, notes=notes)
             return "flow"
-    return None  # transfers, cancellations, options… are covered by reconciliation
+    is_cash = sec is None or sec.get("is_cash_equivalent") or sec.get("type") == "cash"
+    if kind == "transfer" and amount and not qty and is_cash:
+        # Money moved in or out (e.g. Robinhood's recurring deposits). Plaid's sign: negative = into the account.
+        flow = CashFlowKind.DEPOSIT if _d(t.get("amount")) < 0 else CashFlowKind.WITHDRAWAL
+        CashFlow.objects.create(account=account, kind=flow, date=date, amount=amount, external_id=ext, notes=notes)
+        return "flow"
+    return None  # security transfers, cancellations, options… are covered by reconciliation
 
 
 # -- reconciliation --------------------------------------------------------------------------------
