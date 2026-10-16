@@ -361,3 +361,21 @@ def test_client_raises_plaid_errors_and_paginates(settings):
         data = client.get_investment_transactions("tok", dt.date(2025, 1, 1), dt.date(2025, 2, 1))
     assert [t["id"] for t in data["investment_transactions"]] == [1, 2, 3]
     assert post.call_args.kwargs["json"]["options"]["offset"] == 2
+
+
+@pytest.mark.parametrize("name, flow", [("FXAIX - MATCH CONTRIBUTION", "employer"), ("FXAIX - BEFORETAX CONTRIBUTION", "deposit")])
+def test_401k_contributions_record_the_money_coming_in(user, name, flow):
+    from connections.sync import apply_transaction
+    from portfolio.models import CashFlow
+
+    account = Account.objects.create(owner=user, name="401k", account_type="401k")
+    sec = {"security_id": "s1", "ticker_symbol": "FXAIX", "name": "Fidelity 500 Index", "type": "mutual fund"}
+    t = {
+        "investment_transaction_id": "c1", "type": "buy", "subtype": "contribution", "name": name, "date": "2025-01-02",
+        "quantity": 2, "price": 200, "amount": 400, "fees": 0, "security_id": "s1",
+    }
+    assert apply_transaction(t, account, {"s1": sec}) == "tx"
+    assert Transaction.objects.get(account=account).quantity == 2
+    cash = CashFlow.objects.get(account=account)
+    assert (cash.kind, cash.amount) == (flow, 400)
+    assert apply_transaction(t, account, {"s1": sec}) == "dup"
