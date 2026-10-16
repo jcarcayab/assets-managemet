@@ -192,9 +192,12 @@ def compute_debts(user) -> dict:
             }
         )
     # Avalanche order on today's rate: highest first minimizes interest; 0% promos go last (watch the alerts).
-    rows.sort(key=lambda r: (-r["current_rate_pct"], -r["balance"]))
-    for i, r in enumerate(rows, start=1):
+    # Paid-off debts (e.g. cards at $0) have nothing to pay: no place in the order, listed last.
+    rows.sort(key=lambda r: (r["balance"] <= 0, -r["current_rate_pct"], -r["balance"]))
+    for i, r in enumerate((r for r in rows if r["balance"] > 0), start=1):
         r["order"] = i
+    for r in rows:
+        r.setdefault("order", None)
     total = sum((r["balance"] for r in rows), ZERO)
     return {
         "expected_return_pct": expected,
