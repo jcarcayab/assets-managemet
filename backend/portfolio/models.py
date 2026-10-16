@@ -453,12 +453,27 @@ class Liability(models.Model):
         help_text="Tasa anual (APR).",
     )
     minimum_payment = models.DecimalField(**MONEY, default=Decimal(0), help_text="Pago mínimo mensual.")
+    promo_rate_pct = models.DecimalField(
+        max_digits=6, decimal_places=3, null=True, blank=True, validators=[MinValueValidator(Decimal(0))],
+        help_text="Tasa durante la promoción (p.ej. 0). Vacío = sin promoción.",
+    )
+    promo_end_date = models.DateField(null=True, blank=True, help_text="Último día de la tasa promocional.")
+    deferred_interest = models.BooleanField(
+        default=False,
+        help_text="Intereses diferidos: si no se liquida antes del fin, cobran todo el interés de la promoción.",
+    )
     updated_at = models.DateTimeField(auto_now=True)
     notes = models.CharField(max_length=200, blank=True)
 
     class Meta:
         ordering = ["-interest_rate_pct", "-balance"]
         verbose_name_plural = "liabilities"
+
+    def in_promo(self, on: dt.date) -> bool:
+        return self.promo_rate_pct is not None and self.promo_end_date is not None and on <= self.promo_end_date
+
+    def current_rate_pct(self, on: dt.date) -> Decimal:
+        return self.promo_rate_pct if self.in_promo(on) else self.interest_rate_pct
 
 
 class UserSettings(models.Model):

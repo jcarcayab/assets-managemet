@@ -93,6 +93,9 @@ export type Liability = {
   balance: number
   interest_rate_pct: number
   minimum_payment: number
+  promo_rate_pct: number | null
+  promo_end_date: string | null
+  deferred_interest: boolean
   updated_at: string
   notes: string
 }
@@ -118,6 +121,7 @@ export type Debts = {
   weighted_rate_pct: number | null
   minimum_payments: number
   annual_interest: number
+  alerts: { name: string; level: 'warning' | 'critical'; message: string }[]
   rows: {
     id: number
     order: number
@@ -125,11 +129,19 @@ export type Debts = {
     kind_label: string
     balance: number
     interest_rate_pct: number
+    current_rate_pct: number
+    in_promo: boolean
+    promo_rate_pct: number | null
+    promo_end_date: string | null
+    promo_months_left: number | null
+    deferred_interest: boolean
+    payment_to_clear_promo: number | null
+    clears_in_promo: boolean | null
     minimum_payment: number
     annual_interest: number
     months_to_payoff: number | null
     total_interest: number | null
-    verdict: 'pay_first' | 'either' | 'invest'
+    verdict: 'pay_first' | 'either' | 'invest' | 'promo'
   }[]
 }
 
