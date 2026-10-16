@@ -63,7 +63,7 @@ class FakePlaid:
         self.voo_qty, self.fail, self.no_investments = voo_qty, fail, no_investments
         self.removed = []
 
-    def create_link_token(self, user_id, access_token=None, kind="investments"):
+    def create_link_token(self, user_id, access_token=None, kind="investments", add_transactions=False):
         return f"link-sandbox-{user_id}-{kind}-{'update' if access_token else 'new'}"
 
     def exchange_public_token(self, public_token):
@@ -89,6 +89,14 @@ class FakePlaid:
         return {"investment_transactions": TRANSACTIONS, "securities": SECURITIES}
 
     liabilities = None  # None = the item has no Liabilities product
+    bank = None  # None = the user hasn't granted Transactions yet
+    cursors: list
+
+    def sync_transactions(self, access_token, cursor=""):
+        self.cursors = [*getattr(self, "cursors", []), cursor]
+        if self.bank is None:
+            raise PlaidError("ADDITIONAL_CONSENT_REQUIRED", "consent required")
+        return {**self.bank, "cursor": "c2"}
 
     def get_liabilities(self, access_token):
         if self.liabilities is None:
@@ -379,3 +387,55 @@ def test_401k_contributions_record_the_money_coming_in(user, name, flow):
     cash = CashFlow.objects.get(account=account)
     assert (cash.kind, cash.amount) == (flow, 400)
     assert apply_transaction(t, account, {"s1": sec}) == "dup"
+
+
+BANK = {
+    "added": [
+        {"transaction_id": "b1", "account_id": "dep1", "date": "2025-05-01", "amount": -3.25, "name": "Interest",
+         "personal_finance_category": {"detailed": "INCOME_INTEREST_EARNED"}},
+        {"transaction_id": "b2", "account_id": "dep1", "date": "2025-05-02", "amount": 40, "name": "Coffee",
+         "personal_finance_category": {"detailed": "FOOD_AND_DRINK_COFFEE"}},
+        {"transaction_id": "b3", "account_id": "dep1", "date": "2025-05-03", "amount": -1, "pending": True, "name": "Interest",
+         "personal_finance_category": {"detailed": "INCOME_INTEREST_EARNED"}},
+        {"transaction_id": "b4", "account_id": "inv1", "date": "2025-05-03", "amount": -9, "name": "Interest",
+         "personal_finance_category": {"detailed": "INCOME_INTEREST_EARNED"}},
+    ],
+    "modified": [],
+    "removed": [],
+}
+
+
+def test_bank_interest_is_imported_and_counts_as_gain(user, item):
+    from portfolio.services.positions import compute_summary
+
+    client = FakePlaid()
+    item.bank_transactions = True
+    item.save()
+    report = sync_item(item, client)  # permission not granted yet: the rest of the sync still works
+    assert report["error"] is None and report["interest"] == 0
+    item.refresh_from_db()
+    assert item.transactions_error.startswith("ADDITIONAL_CONSENT_REQUIRED")
+
+    client.bank = BANK
+    report = sync_item(item, client)
+    assert report["interest"] == 1  # posted interest on the bank account only
+    item.refresh_from_db()
+    assert (item.transactions_cursor, item.transactions_error) == ("c2", "")
+    checking = Account.objects.get(owner=user, name="Fidelity Checking ····9999")
+    assert Transaction.objects.get(account=checking, kind="interest").amount == D("3.25")
+    assert holding(user, "····9999", "USD").quantity == 2500  # still the bank's balance
+    row = next(g for g in compute_summary(user)["by_account"] if g["key"] == checking.id)
+    assert (row["value"], row["gain"]) == (2500, D("3.25"))
+
+    client.bank = {"added": [], "modified": [], "removed": [{"transaction_id": "b1"}]}
+    sync_item(item, client)
+    assert client.cursors[-1] == "c2"  # continues where the last sync left off
+    assert not Transaction.objects.filter(account=checking, kind="interest").exists()
+
+
+def test_transactions_link_token_turns_bank_interest_on(api, user, plaid_on, item):
+    resp = api.post("/api/plaid/link-token/", {"item": item.id, "transactions": True}, format="json")
+    assert resp.status_code == 200
+    item.refresh_from_db()
+    assert item.bank_transactions
+    assert api.get("/api/plaid/items/").json()[0]["bank_transactions"] is True
