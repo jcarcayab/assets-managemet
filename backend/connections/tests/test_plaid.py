@@ -63,8 +63,8 @@ class FakePlaid:
         self.voo_qty, self.fail, self.no_investments = voo_qty, fail, no_investments
         self.removed = []
 
-    def create_link_token(self, user_id, access_token=None):
-        return f"link-sandbox-{user_id}-{'update' if access_token else 'new'}"
+    def create_link_token(self, user_id, access_token=None, kind="investments"):
+        return f"link-sandbox-{user_id}-{kind}-{'update' if access_token else 'new'}"
 
     def exchange_public_token(self, public_token):
         return "access-sandbox-secret", "item-1"
@@ -316,7 +316,9 @@ def test_endpoints_require_configuration(api, settings):
 
 
 def test_link_exchange_sync_and_disconnect(api, user, plaid_on, other_user):
-    assert api.post("/api/plaid/link-token/").json()["link_token"].endswith("new")
+    assert api.post("/api/plaid/link-token/").json()["link_token"].endswith("investments-new")
+    assert api.post("/api/plaid/link-token/", {"kind": "credit"}, format="json").json()["link_token"].endswith("credit-new")
+    assert api.post("/api/plaid/link-token/", {"kind": "crypto"}, format="json").status_code == 400
     created = api.post("/api/plaid/exchange/", {"public_token": "public-sandbox-x"}, format="json")
     assert created.status_code == 201
     body = created.json()

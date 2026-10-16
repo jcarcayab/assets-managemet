@@ -346,11 +346,12 @@ export default function Connections() {
       })
   }, [items])
 
-  const connect = async () => {
+  // Plaid only lists accounts that have the required product, so cards-only banks need the "credit" flavor.
+  const connect = async (kind: 'investments' | 'credit') => {
     setBusy(true)
     setError(null)
     try {
-      const { link_token } = await api<{ link_token: string }>('/plaid/link-token/', { method: 'POST' })
+      const { link_token } = await api<{ link_token: string }>('/plaid/link-token/', { body: { kind } })
       const publicToken = await openPlaidLink(link_token)
       if (publicToken) await api('/plaid/exchange/', { body: { public_token: publicToken } })
     } catch (e) {
@@ -366,13 +367,17 @@ export default function Connections() {
       <div className="page-head">
         <h1>Conexiones</h1>
         <div className="actions">
-          <button className="btn primary" onClick={connect} disabled={busy || !status.data?.configured}>
-            {busy ? 'Abriendo…' : '+ Conectar institución'}
+          <button className="btn primary" onClick={() => connect('investments')} disabled={busy || !status.data?.configured}>
+            {busy ? 'Abriendo…' : '+ Inversiones'}
+          </button>
+          <button className="btn" onClick={() => connect('credit')} disabled={busy || !status.data?.configured}>
+            + Tarjetas / préstamos
           </button>
         </div>
       </div>
       <p className="muted small">
-        Conecta brokers y cuentas de retiro con Plaid para importar posiciones y movimientos (se sincroniza a diario). Tus
+        Conecta brokers y cuentas de retiro (Inversiones) o bancos donde solo tienes tarjetas o préstamos (Tarjetas / préstamos,
+        que se registran como deudas) con Plaid; se sincroniza a diario. Tus
         credenciales las maneja Plaid; aquí solo se guarda un token cifrado. Plaid entrega hasta 24 meses de historia: lo anterior
         se registra como saldo inicial al costo promedio que reporta tu broker. Revisa a qué cuenta va cada una antes de
         sincronizar por primera vez.

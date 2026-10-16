@@ -12,6 +12,12 @@ BASE_URLS = {
 TRANSACTIONS_PAGE = 500
 
 
+LINK_PRODUCTS = {
+    "investments": (["investments"], ["liabilities"]),  # brokers and retirement accounts
+    "credit": (["liabilities"], ["investments"]),  # credit cards and loans (e.g. Chase cards)
+}
+
+
 class PlaidError(Exception):
     def __init__(self, code: str | None, message: str | None, status: int = 400):
         super().__init__(f"{code}: {message}")
@@ -49,7 +55,7 @@ class PlaidClient:
 
     # -- Link ----------------------------------------------------------------------------------------
 
-    def create_link_token(self, user_id: int, access_token: str | None = None) -> str:
+    def create_link_token(self, user_id: int, access_token: str | None = None, kind: str = "investments") -> str:
         body = {
             "client_name": "Patrimonio",
             "user": {"client_user_id": str(user_id)},
@@ -59,7 +65,9 @@ class PlaidClient:
         if access_token:
             body["access_token"] = access_token  # update mode: re-authenticate an existing item
         else:
-            body["products"] = ["investments"]
+            # Plaid only offers accounts that have every product in `products`, so a bank with just credit
+            # cards would be "not eligible" for investments; `optional_products` adds the other when supported.
+            body["products"], body["optional_products"] = LINK_PRODUCTS[kind]
         if settings.PLAID_REDIRECT_URI:
             body["redirect_uri"] = settings.PLAID_REDIRECT_URI  # needed for OAuth institutions in production
         return self.post("/link/token/create", body)["link_token"]

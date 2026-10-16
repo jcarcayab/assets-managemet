@@ -9,7 +9,7 @@ from connections.exchange_data import ExchangeError
 from connections.exchange_sync import client_for as exchange_client_for
 from connections.exchange_sync import sync_exchange
 from connections.models import ExchangeConnection, ExchangeProvider, PlaidAccount, PlaidItem
-from connections.plaid import PlaidError, configured, get_client
+from connections.plaid import LINK_PRODUCTS, PlaidError, configured, get_client
 from connections.sync import link_item, sync_item
 from portfolio.models import Account, Liability
 
@@ -87,8 +87,11 @@ class LinkTokenView(PlaidAPIView):
             return self.not_configured()
         item_id = request.data.get("item")
         access_token = self.item(request, item_id).access_token if item_id else None
+        kind = request.data.get("kind", "investments")
+        if kind not in LINK_PRODUCTS:
+            return Response({"detail": f"Tipo de conexión desconocido: {kind}"}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            return Response({"link_token": self.client.create_link_token(request.user.id, access_token)})
+            return Response({"link_token": self.client.create_link_token(request.user.id, access_token, kind=kind)})
         except PlaidError as exc:
             return plaid_error(exc)
 
