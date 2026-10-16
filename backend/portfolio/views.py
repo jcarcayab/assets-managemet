@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from django.db.models.deletion import ProtectedError, RestrictedError
 from rest_framework import status, viewsets
 from rest_framework.decorators import api_view
@@ -49,7 +51,7 @@ from portfolio.services.risk import compute_risk
 from portfolio.services.taxes import compute_tax_lots
 from portfolio.services.history import BENCHMARKS, update_history
 from portfolio.services.performance import compute_income, compute_performance
-from portfolio.services.planning import compute_budget, compute_debts, contribution_limits, monte_carlo
+from portfolio.services.planning import compute_budget, compute_debts, contribution_limits, monte_carlo, savings_plan
 from portfolio.services.positions import compute_positions, compute_summary
 from portfolio.services.prices import refresh_prices
 from portfolio.services.snapshots import take_snapshot
@@ -242,6 +244,20 @@ def debts_view(request):
 @api_view(["GET"])
 def monte_carlo_view(request):
     return Response(monte_carlo(request.user, base=request.query_params.get("base", "net_worth_ex_private")))
+
+
+@api_view(["GET"])
+def savings_plan_view(request):
+    """?apy=3.1&ids=1,2 (ids omitted = the debts at 0% today)."""
+    try:
+        apy = Decimal(request.query_params.get("apy", "3.1"))
+        raw = request.query_params.get("ids")
+        ids = [int(i) for i in raw.split(",") if i] if raw is not None else None
+    except (InvalidOperation, ValueError):
+        return Response({"detail": "Parámetros inválidos."}, status=status.HTTP_400_BAD_REQUEST)
+    if not Decimal(0) <= apy <= Decimal(25):
+        return Response({"detail": "La tasa debe estar entre 0 y 25%."}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(savings_plan(request.user, apy, ids))
 
 
 @api_view(["GET"])

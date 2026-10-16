@@ -210,6 +210,92 @@ def compute_debts(user) -> dict:
     }
 
 
+# -- keep the cash, pay the minimum ----------------------------------------------------------------
+
+
+def savings_plan(user, apy_pct: Decimal, ids: list[int] | None = None) -> dict:
+    """What you'd earn by parking each debt's balance in a savings account and paying only the minimum from it.
+
+    Month by month: the account earns interest (APY compounded monthly), then the minimum payment leaves it;
+    the debt charges its own rate, if any. When a promo would end with a balance left, the rest is paid from the
+    account that month, so the regular rate or deferred interest never kicks in. Default selection: the debts at
+    0% today. Interest earned is taxed as ordinary income."""
+    s = UserSettings.for_user(user)
+    today = timezone.localdate()
+    monthly_yield = (1 + float(apy_pct) / 100) ** (1 / 12) - 1
+    tax = float(s.ordinary_income_tax_pct) / 100
+    debts = [lb for lb in Liability.objects.filter(owner=user, balance__gt=0)]
+    if ids is not None:
+        debts = [lb for lb in debts if lb.id in ids]
+    else:
+        debts = [lb for lb in debts if lb.current_rate_pct(today) == 0]
+
+    rows = []
+    for lb in debts:
+        in_promo = lb.in_promo(today)
+        promo_months = promo_months_left(lb.promo_end_date, today) if in_promo else None
+        payment = float(lb.minimum_payment)
+        fund = debt = float(lb.balance)
+        earned = charged = lump = 0.0
+        months = None
+        note = ""
+        if payment <= 0:
+            note = "Sin pago mínimo definido: no se puede simular."
+        else:
+            for month in range(1, MAX_MONTHS + 1):
+                gain = fund * monthly_yield
+                fund += gain
+                earned += gain
+                rate = float(lb.promo_rate_pct if promo_months is not None and month <= promo_months else lb.interest_rate_pct)
+                cost = debt * rate / 1200
+                debt += cost
+                charged += cost
+                paid = min(payment, debt)
+                fund -= paid
+                debt -= paid
+                if debt > 1e-9 and promo_months is not None and month == promo_months:
+                    lump = debt  # the promo ends with a balance: clear it from the account now
+                    fund -= debt
+                    debt = 0.0
+                if debt <= 1e-9:
+                    months = month
+                    break
+            if months is None:
+                note = "El pago mínimo no la liquida: el dinero se iría en intereses."
+            elif lump:
+                note = f"Al terminar la promoción ({lb.promo_end_date}) pagas el resto (${lump:,.2f}) desde la cuenta."
+        net = earned * (1 - tax) - charged
+        rows.append(
+            {
+                "id": lb.id,
+                "name": lb.name,
+                "balance": lb.balance,
+                "minimum_payment": lb.minimum_payment,
+                "rate_pct": lb.current_rate_pct(today),
+                "promo_end_date": lb.promo_end_date if in_promo else None,
+                "months": months,
+                "paid_off": add_months(today, months) if months else None,
+                "lump_sum": round(lump, 2),
+                "interest_earned": round(earned, 2),
+                "debt_interest": round(charged, 2),
+                "net_after_tax": round(net, 2) if months else None,
+                "note": note,
+            }
+        )
+    done = [r for r in rows if r["months"]]
+    return {
+        "apy_pct": apy_pct,
+        "tax_pct": s.ordinary_income_tax_pct,
+        "rows": rows,
+        "totals": {
+            "balance": sum((r["balance"] for r in rows), ZERO),
+            "interest_earned": round(sum(r["interest_earned"] for r in done), 2),
+            "net_after_tax": round(sum(r["net_after_tax"] for r in done), 2),
+            "months": max((r["months"] for r in done), default=None),
+        },
+    }
+
+
 # -- Monte Carlo retirement ------------------------------------------------------------------------
 
 BASES = ("net_worth", "net_worth_ex_private", "liquid")

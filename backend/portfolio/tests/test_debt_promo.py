@@ -89,3 +89,43 @@ def test_paid_off_debts_have_no_place_in_the_order(user):
                              minimum_payment=50)
     rows = compute_debts(user)["rows"]
     assert [(r["name"], r["order"]) for r in rows] == [("Card", 1), ("Paid card", None)]
+
+
+def test_savings_plan_parks_the_balance_and_pays_the_minimum(user):
+    from portfolio.models import UserSettings, add_months
+    from portfolio.services.planning import savings_plan
+
+    s = UserSettings.for_user(user)
+    s.ordinary_income_tax_pct = D(24)
+    s.save()
+    today = dt.date.today()
+    Liability.objects.create(owner=user, name="Phone", kind="other", balance=1200, interest_rate_pct=0, minimum_payment=100)
+    Liability.objects.create(owner=user, name="Store", kind="credit_card", balance=1200, interest_rate_pct=25,
+                             minimum_payment=50, promo_rate_pct=0, promo_end_date=add_months(today, 6) - dt.timedelta(days=1),
+                             deferred_interest=True)
+    Liability.objects.create(owner=user, name="Card", kind="credit_card", balance=500, interest_rate_pct=28,
+                             minimum_payment=50)
+    Liability.objects.create(owner=user, name="Paid", kind="credit_card", balance=0, interest_rate_pct=0)
+
+    plan = savings_plan(user, D("3.1"))
+    rows = {r["name"]: r for r in plan["rows"]}
+    assert set(rows) == {"Phone", "Store"}  # by default the debts at 0% today, with a balance
+
+    phone = rows["Phone"]
+    assert phone["months"] == 12 and phone["debt_interest"] == 0
+    # Starts at $1,200 and drops $100 a month (sum of month-start balances ≈ $7,800) at ~0.2545%/month ≈ $20
+    assert 19 < phone["interest_earned"] < 21
+    assert phone["net_after_tax"] == pytest.approx(phone["interest_earned"] * 0.76, abs=0.01)
+
+    store = rows["Store"]  # the promo ends first: the rest is paid from the account, no deferred interest
+    assert store["months"] == 5 and store["lump_sum"] == 950 and store["debt_interest"] == 0
+    assert "pagas el resto ($950.00)" in store["note"]
+
+    card = savings_plan(user, D("3.1"), ids=[Liability.objects.get(name="Card").id])["rows"][0]
+    assert card["net_after_tax"] < 0  # 28% debt vs 3.1% savings: keeping the cash loses money
+
+
+def test_savings_plan_endpoint(api):
+    assert api.get("/api/debts/savings-plan/?apy=3.1").status_code == 200
+    assert api.get("/api/debts/savings-plan/?apy=abc").status_code == 400
+    assert api.get("/api/debts/savings-plan/?apy=40").status_code == 400
