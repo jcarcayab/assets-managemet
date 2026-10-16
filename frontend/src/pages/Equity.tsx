@@ -75,6 +75,52 @@ function Exercises({ g, onEdit }: { g: GrantRow; onEdit: (row: EquityExerciseRow
 const isOption = (v: FormValues) => v.grant_type !== 'shares'
 const hasVesting = (v: FormValues) => Boolean(v.vesting_start)
 
+function Scenarios({ data }: { data: EquitySummary }) {
+  return (
+    <>
+      {data.scenarios.map((c) => (
+        <div className="card" key={c.company}>
+          <div className="card-head">
+            <h2>
+              {c.company}: si la empresa se vende a… <span className="muted small">· FMV hoy {money(c.fmv)}</span>
+            </h2>
+          </div>
+          <p className="muted small">
+            Valor si vendieras todo en una salida (sin descuento de liquidez), antes y después de impuestos: el spread de las NSO
+            tributa como ingreso; las acciones e ISO, como ganancia de capital. “Con todo adquirido” suma lo que aún no ha vestido.
+          </p>
+          <div className="table-wrap flush">
+            <table>
+              <thead>
+                <tr>
+                  <th>Escenario</th>
+                  <th className="num">Precio</th>
+                  <th className="num hide-sm">Adquirido</th>
+                  <th className="num">Adquirido, neto</th>
+                  <th className="num">Con todo adquirido, neto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {c.rows.map((r) => (
+                  <tr key={r.multiple}>
+                    <td>{Number(r.multiple) === 0 ? 'Quiebra' : `${Number(r.multiple)}× FMV`}</td>
+                    <td className="num">{money(r.price)}</td>
+                    <td className="num hide-sm">{money(r.gross, true)}</td>
+                    <td className="num">
+                      <strong>{money(r.net, true)}</strong>
+                    </td>
+                    <td className="num">{money(r.full_net, true)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </>
+  )
+}
+
 function GrantCards({ data }: { data: EquitySummary }) {
   const [exercising, setExercising] = useState<{ grant: GrantRow; row: EquityExerciseRow | null } | null>(null)
   return (
@@ -135,8 +181,26 @@ function GrantCards({ data }: { data: EquitySummary }) {
                   <dd>{money(g.cash_to_exercise, true)}</dd>
                   <dt>Vencimiento</dt>
                   <dd>{g.expiration_date ? `${g.expiration_date} (${g.days_to_expiration} d)` : 'sin definir'}</dd>
-                  <dt>Plazo si dejas la empresa</dt>
-                  <dd>{g.post_termination_days} días</dd>
+                  {g.termination_date ? (
+                    <>
+                      <dt>Dejaste la empresa</dt>
+                      <dd>{g.termination_date}</dd>
+                      <dt>Último día para ejercer</dt>
+                      <dd className={g.options_lost ? 'neg' : ''}>
+                        {g.exercise_deadline}
+                        {g.options_lost && ' (vencido: opciones perdidas)'}
+                      </dd>
+                    </>
+                  ) : (
+                    g.open_options > 0 && (
+                      <>
+                        <dt>Si te vas hoy</dt>
+                        <dd>
+                          {g.post_termination_days} días para reunir {money(g.cash_to_exercise, true)}
+                        </dd>
+                      </>
+                    )
+                  )}
                 </>
               )}
               {Number(g.liquidity_discount_pct) > 0 && (
@@ -183,7 +247,12 @@ export default function Equity() {
             regular al ejercer, pero el spread cuenta para AMT. Confirma con tu CPA antes de ejercer.
             {!accountOptions.length && ' Primero crea una cuenta de tipo “Equity privada”.'}
           </p>
-          {summary.data && summary.data.grants.length > 0 && <GrantCards data={summary.data} />}
+          {summary.data && summary.data.grants.length > 0 && (
+            <>
+              <GrantCards data={summary.data} />
+              <Scenarios data={summary.data} />
+            </>
+          )}
         </>
       }
       columns={[
@@ -207,6 +276,13 @@ export default function Equity() {
         { name: 'cliff_months', label: 'Cliff (meses)', type: 'number', show: hasVesting },
         { name: 'expiration_date', label: 'Vencimiento de las opciones', type: 'date', nullable: true, show: isOption },
         { name: 'post_termination_days', label: 'Días para ejercer si te vas', type: 'number', show: isOption },
+        {
+          name: 'termination_date',
+          label: 'Fecha en que dejaste la empresa',
+          type: 'date',
+          nullable: true,
+          help: 'Solo si ya te fuiste: detiene el vesting y empieza el plazo para ejercer',
+        },
         { name: 'liquidity_discount_pct', label: 'Descuento de liquidez (%)', type: 'number', help: 'Ej. 20–30 para startups' },
         { name: 'sector', label: 'Sector', help: 'Para medir concentración, ej. Crypto' },
         { name: 'notes', label: 'Notas', type: 'textarea' },
@@ -214,12 +290,12 @@ export default function Equity() {
       defaults={{
         account: accountOptions[0]?.value ?? '', company: '', grant_type: 'nso', quantity: '', strike: '', fmv: '',
         grant_date: '', vesting_start: '', vesting_months: '48', cliff_months: '12', expiration_date: '',
-        post_termination_days: '90', liquidity_discount_pct: '0', sector: '', notes: '',
+        post_termination_days: '90', termination_date: '', liquidity_discount_pct: '0', sector: '', notes: '',
       }}
       toForm={(r) =>
         formOf(r, [
           'account', 'company', 'grant_type', 'quantity', 'strike', 'fmv', 'grant_date', 'vesting_start',
-          'vesting_months', 'cliff_months', 'expiration_date', 'post_termination_days', 'liquidity_discount_pct', 'sector',
+          'vesting_months', 'cliff_months', 'expiration_date', 'post_termination_days', 'termination_date', 'liquidity_discount_pct', 'sector',
           'notes',
         ])
       }
