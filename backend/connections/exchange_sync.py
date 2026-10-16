@@ -89,18 +89,21 @@ def _exists(account, ext_id) -> bool:
 
 
 def apply_snapshot(conn: ExchangeConnection, snap: Snapshot) -> dict:
-    report = {"trades": 0, "rewards": 0, "cash_flows": 0, "adjustments": 0, "skipped": snap.skipped}
+    report = {"trades": 0, "rewards": 0, "cash_flows": 0, "transfers": 0, "adjustments": 0, "skipped": snap.skipped}
     owner = conn.owner
     account = ensure_account(conn)
-    symbols = set(snap.balances) | {t.symbol for t in snap.trades} | {r.symbol for r in snap.rewards}
+    symbols = (
+        set(snap.balances) | {t.symbol for t in snap.trades} | {r.symbol for r in snap.rewards}
+        | {t.symbol for t in snap.transfers}
+    )
     assets = {s: crypto_asset(owner, s) for s in symbols}
 
     # New coins need a live price (for reconciliation) and history (to value rewards) before we use them.
     live = [a for a in assets.values() if a.asset_class != AssetClass.CASH]
     try:
         refresh_prices([a for a in live if a.last_price is None])
-        if snap.rewards:
-            update_history(owner)
+        if snap.rewards or snap.transfers:
+            update_history(owner)  # daily closes to value rewards and transfers
     except Exception as exc:  # pricing is best-effort; balances still reconcile
         log.warning("Price refresh during exchange sync failed: %s", exc)
     for a in live:
@@ -128,6 +131,22 @@ def apply_snapshot(conn: ExchangeConnection, snap: Snapshot) -> dict:
                 notes="" if price else "Precio del día desconocido: recompensa registrada a costo 0.",
             )
             report["rewards"] += 1
+
+        for t in sorted(snap.transfers, key=lambda t: t.date):
+            if _exists(account, t.ext_id):
+                continue
+            asset = assets[t.symbol]
+            price = price_on(asset, t.date)
+            if price is None:
+                report["skipped"] += 1  # no close for that day: reconciliation covers it
+                continue
+            Transaction.objects.create(
+                account=account, asset=asset, date=t.date, external_id=t.ext_id,
+                kind=TransactionKind.BUY if t.side == "buy" else TransactionKind.SELL,
+                quantity=t.quantity, price=price, fees=t.fee * price,
+                notes=f"{'Recibido de' if t.side == 'buy' else 'Enviado a'} otra billetera (cierre del día).",
+            )
+            report["transfers"] += 1
 
         for c in snap.cash_moves:
             if _exists(account, c.ext_id):
@@ -161,6 +180,8 @@ def sync_exchange(conn: ExchangeConnection, client=None, full: bool = False) -> 
         report["error"] = None
     except ExchangeError as exc:
         conn.last_error = str(exc)[:300]
-        report = {"trades": 0, "rewards": 0, "cash_flows": 0, "adjustments": 0, "skipped": 0, "error": str(exc)}
+        report = {
+            "trades": 0, "rewards": 0, "cash_flows": 0, "transfers": 0, "adjustments": 0, "skipped": 0, "error": str(exc),
+        }
     conn.save(update_fields=["last_synced_at", "last_error"])
     return report

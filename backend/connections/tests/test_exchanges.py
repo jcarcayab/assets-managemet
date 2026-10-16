@@ -83,7 +83,9 @@ def test_kraken_snapshot_normalizes_everything():
     assert trade.date == dt.date(2025, 1, 1)
     assert sorted(r.quantity for r in snap.rewards) == [D("0.05"), D("0.1")]
     assert [(c.amount, c.kind) for c in snap.cash_moves] == [(D(1000), "deposit")]
-    assert snap.skipped == 2  # the SOL/ETH trade and the BTC withdrawal
+    # The BTC withdrawal to another wallet becomes a transfer, valued later at that day's close.
+    assert [(t.symbol, t.side, t.quantity) for t in snap.transfers] == [("BTC", "sell", D("0.1"))]
+    assert snap.skipped == 1  # the SOL/ETH trade
 
 
 def test_kraken_errors_raise():
@@ -430,3 +432,22 @@ def test_sync_endpoint_and_ownership(api, user, other_user, conn, no_network):
     assert api.delete(f"/api/exchanges/{theirs.id}/").status_code == 404
     assert api.delete(f"/api/exchanges/{conn.id}/").status_code == 204
     assert Account.objects.filter(owner=user, name="Kraken").exists()  # history stays
+
+
+def test_crypto_transfers_use_that_days_close(user, conn, no_network):
+    from connections.exchange_data import Transfer
+    from portfolio.models import PriceHistory
+
+    PriceHistory.objects.create(symbol="SOL-USD", date=dt.date(2025, 1, 3), close=D(90))
+    snap = snapshot()
+    snap.balances["SOL"] = D(15)
+    snap.transfers = [
+        Transfer("x:d1", dt.date(2025, 1, 4), "SOL", "buy", D(4)),  # close of the 3rd carries forward
+        Transfer("x:w1", dt.date(2025, 1, 2), "SOL", "sell", D(1), fee=D("0.01")),  # before any close: skipped
+    ]
+    report = sync_exchange(conn, FakeExchange(snap))
+    assert report["transfers"] == 1 and report["skipped"] == 1
+    received = Transaction.objects.get(external_id="x:d1")
+    assert (received.kind, received.quantity, received.price) == ("buy", D(4), D(90))
+    conn.refresh_from_db()
+    assert position(user, conn.account).quantity == 15
