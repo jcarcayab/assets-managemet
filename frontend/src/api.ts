@@ -60,6 +60,27 @@ export async function apiUpload<T = unknown>(path: string, form: FormData): Prom
   return data as T
 }
 
+export type SavingsPlan = {
+  apy_pct: number
+  tax_pct: number
+  rows: {
+    id: number
+    name: string
+    balance: number
+    minimum_payment: number
+    rate_pct: number
+    promo_end_date: string | null
+    months: number | null
+    paid_off: string | null
+    lump_sum: number
+    interest_earned: number
+    debt_interest: number
+    net_after_tax: number | null
+    note: string
+  }[]
+  totals: { balance: number; interest_earned: number; net_after_tax: number; months: number | null }
+}
+
 export type CsvPreview = {
   rows: { line: number; kind: string; date: string; symbol: string; quantity: number; price: number; fees: number; amount: number; notes: string; status: 'new' | 'duplicate' }[]
   errors: { line: number; error: string }[]

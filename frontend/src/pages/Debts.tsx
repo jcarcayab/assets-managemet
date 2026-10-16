@@ -1,6 +1,7 @@
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from '../api'
-import type { Debts as DebtsData, Liability } from '../api'
+import type { Debts as DebtsData, Liability, SavingsPlan } from '../api'
 import { CrudPage } from '../components/CrudPage'
 import type { FormValues } from '../components/FormModal'
 import { useChoices } from '../hooks'
@@ -46,6 +47,109 @@ function Advice({ r }: { r: Row }) {
         </small>
       )}
     </>
+  )
+}
+
+/** Park each chosen debt's balance in a savings account and pay only the minimum from it: what does it earn? */
+function SavingsPlanCard({ d }: { d: DebtsData }) {
+  const open = d.rows.filter((r) => r.balance > 0)
+  const [apy, setApy] = useState('3.1')
+  const [chosen, setChosen] = useState<Set<number>>(() => new Set(open.filter((r) => Number(r.current_rate_pct) === 0).map((r) => r.id)))
+  const ids = [...chosen].sort((a, b) => a - b).join(',')
+  const plan = useQuery({
+    queryKey: ['savings-plan', apy, ids],
+    queryFn: () => api<SavingsPlan>(`/debts/savings-plan/?apy=${encodeURIComponent(apy || '0')}&ids=${ids}`),
+    placeholderData: keepPreviousData,
+  })
+  const toggle = (id: number) => {
+    const next = new Set(chosen)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setChosen(next)
+  }
+  const p = plan.data
+
+  return (
+    <div className="card">
+      <h2>¿Y si guardas el dinero en una cuenta de ahorro?</h2>
+      <p className="muted small">
+        Pones hoy el saldo de las deudas elegidas en una cuenta de ahorro (high-yield) y pagas solo el mínimo desde ella. Cada mes la
+        cuenta genera intereses; si una promoción termina antes de liquidar la deuda, ese mes pagas el resto desde la cuenta, para que no
+        te cobren la tasa normal ni intereses diferidos. Lo que queda al final es tu ganancia.
+      </p>
+      <div className="form-grid">
+        <label>
+          <span>Rendimiento de la cuenta (APY %)</span>
+          <input type="number" inputMode="decimal" step="0.1" min="0" max="25" value={apy} onChange={(e) => setApy(e.target.value)} />
+        </label>
+      </div>
+      <div className="check-list mt">
+        {open.map((r) => (
+          <label key={r.id} className="check">
+            <input type="checkbox" checked={chosen.has(r.id)} onChange={() => toggle(r.id)} />
+            {r.name} <span className="muted small">· {money(r.balance, true)} al {pct(Number(r.current_rate_pct), 2)}</span>
+          </label>
+        ))}
+      </div>
+      {plan.error && <p className="error">{String(plan.error)}</p>}
+      {p && p.rows.length > 0 && (
+        <>
+          <div className="kpis">
+            <div className="card kpi">
+              <span className="kpi-label">Dinero a apartar hoy</span>
+              <strong className="kpi-value">{money(p.totals.balance, true)}</strong>
+              <span className="kpi-sub">{p.rows.length} deudas</span>
+            </div>
+            <div className="card kpi">
+              <span className="kpi-label">Intereses ganados</span>
+              <strong className="kpi-value pos">{money(p.totals.interest_earned)}</strong>
+              <span className="kpi-sub">al {pct(Number(p.apy_pct), 2)} hasta liquidarlas{p.totals.months ? ` (${duration(p.totals.months)})` : ''}</span>
+            </div>
+            <div className="card kpi">
+              <span className="kpi-label">Ganancia neta</span>
+              <strong className={`kpi-value ${p.totals.net_after_tax >= 0 ? 'pos' : 'neg'}`}>{money(p.totals.net_after_tax)}</strong>
+              <span className="kpi-sub">tras impuesto del {pct(Number(p.tax_pct), 0)} e intereses de la deuda</span>
+            </div>
+          </div>
+          <div className="table-wrap flush">
+            <table>
+              <thead>
+                <tr>
+                  <th>Deuda</th>
+                  <th className="num">Apartar</th>
+                  <th className="num hide-sm">Pago</th>
+                  <th className="num">Plazo</th>
+                  <th className="num">Intereses ganados</th>
+                  <th className="num">Neto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {p.rows.map((r) => (
+                  <tr key={r.id}>
+                    <td>
+                      <strong>{r.name}</strong>
+                      {r.note && <small className="block muted">{r.note}</small>}
+                      {r.debt_interest > 0 && <small className="block neg">La deuda cobra {money(r.debt_interest)} de intereses.</small>}
+                    </td>
+                    <td className="num">{money(r.balance, true)}</td>
+                    <td className="num hide-sm">{money(r.minimum_payment)}</td>
+                    <td className="num">{r.months ? duration(r.months) : '—'}</td>
+                    <td className="num">{money(r.interest_earned)}</td>
+                    <td className={`num ${r.net_after_tax !== null && r.net_after_tax < 0 ? 'neg' : ''}`}>
+                      {r.net_after_tax === null ? '—' : money(r.net_after_tax)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="muted small">
+            Supone el APY fijo; en cuentas de ahorro la tasa puede bajar. Los intereses de la cuenta pagan impuesto como ingreso ordinario
+            (tu tasa en Ajustes).
+          </p>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -149,7 +253,12 @@ export default function Debts() {
       intro={
         <>
           <p className="muted small">Hipoteca, tarjetas y préstamos. Se restan del patrimonio. Actualiza el saldo cuando cambie.</p>
-          {debts.data && debts.data.rows.length > 0 && <Plan d={debts.data} />}
+          {debts.data && debts.data.rows.length > 0 && (
+            <>
+              <Plan d={debts.data} />
+              <SavingsPlanCard d={debts.data} />
+            </>
+          )}
         </>
       }
       emptyText="Sin deudas registradas."
