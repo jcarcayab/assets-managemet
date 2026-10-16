@@ -136,15 +136,6 @@ export default function SettingsPage({ user }: { user: User }) {
 
   const sections: Section[] = [
     {
-      key: 'trading',
-      title: 'Niveles de trading (crypto)',
-      fields: [
-        { name: 'take_profit_1_pct', label: 'Take profit 1 (%)', type: 'number', required: true },
-        { name: 'take_profit_2_pct', label: 'Take profit 2 (%)', type: 'number', required: true },
-        { name: 'stop_loss_pct', label: 'Stop loss (%)', type: 'number', required: true, help: 'Negativo, p.ej. −5' },
-      ],
-    },
-    {
       key: 'risk',
       title: 'Riesgo y comparación',
       fields: [
@@ -206,16 +197,11 @@ export default function SettingsPage({ user }: { user: User }) {
       {s && (
         <>
           {card(sections[0], [
-            ['Take profit 1', pct(s.take_profit_1_pct)],
-            ['Take profit 2', pct(s.take_profit_2_pct)],
-            ['Stop loss', pct(s.stop_loss_pct)],
-          ])}
-          {card(sections[1], [
             ['Benchmark', benchmarkLabel ?? '—'],
             ['Límite de concentración', pct(s.concentration_limit_pct, 0)],
             ['Fondo de emergencia', `${s.emergency_fund_months} meses`],
           ])}
-          {card(sections[2], [
+          {card(sections[1], [
             ['Ganancias de capital', pct(s.capital_gains_tax_pct, 0)],
             ['Retiro 401k / IRA', pct(s.retirement_tax_pct, 0)],
             ['Ingreso ordinario', pct(s.ordinary_income_tax_pct, 0)],

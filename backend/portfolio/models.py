@@ -551,9 +551,6 @@ class Liability(models.Model):
 
 class UserSettings(models.Model):
     owner = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="portfolio_settings")
-    take_profit_1_pct = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal(10))
-    take_profit_2_pct = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal(20))
-    stop_loss_pct = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal(-5))
     current_age = models.PositiveSmallIntegerField(default=35)
     retirement_age = models.PositiveSmallIntegerField(default=61)
     annual_return_pct = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("3.8"))

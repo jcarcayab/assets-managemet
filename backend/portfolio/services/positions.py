@@ -349,7 +349,6 @@ def compute_positions(user, include_closed: bool = False) -> list[Position]:
     for p in positions:
         p.finalize()
     _apply_account_context(positions)
-    _apply_trade_levels(user, positions)
     positions.sort(key=lambda p: (p.account.name, -p.market_value))
     return positions
 
@@ -364,18 +363,6 @@ def _apply_account_context(positions: list[Position]) -> None:
         if p.target_pct is not None:
             p.target_value = total * p.target_pct / HUNDRED
             p.rebalance = p.target_value - p.market_value
-
-
-def _apply_trade_levels(user, positions: list[Position]) -> None:
-    """Take-profit / stop-loss price levels for crypto, from the user's percentages."""
-    s = UserSettings.for_user(user)
-    for p in positions:
-        if p.asset_class != AssetClass.CRYPTO or not p.quantity:
-            continue
-        avg = p.avg_cost
-        p.extra["tp1_price"] = avg * (1 + s.take_profit_1_pct / HUNDRED)
-        p.extra["tp2_price"] = avg * (1 + s.take_profit_2_pct / HUNDRED)
-        p.extra["sl_price"] = avg * (1 + s.stop_loss_pct / HUNDRED)
 
 
 def lot_gains(p: Position, on: dt.date) -> tuple[Decimal, Decimal]:

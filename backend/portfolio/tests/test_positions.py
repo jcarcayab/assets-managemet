@@ -107,9 +107,6 @@ def test_crypto_return_vs_deposits_and_levels(user):
     s = compute_summary(user)
     assert s["crypto"]["value"] == D(1500)
     assert s["crypto"]["gain"] == D(300)
-    [p] = compute_positions(user)
-    assert p.extra["tp1_price"] == D(110)
-    assert p.extra["sl_price"] == D(95)
 
 
 def test_users_do_not_see_each_others_data(user, other_user, broker, voo):

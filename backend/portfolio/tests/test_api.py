@@ -81,7 +81,7 @@ def test_refresh_prices_updates_live_assets_only(api, user):
 
 
 def test_settings_roundtrip(api):
-    assert api.get("/api/settings/").json()["take_profit_1_pct"] == 10
+    assert api.get("/api/settings/").json()["retirement_age"] == 61
     resp = api.patch("/api/settings/", {"retirement_age": 60}, format="json")
     assert resp.json()["retirement_age"] == 60
 
