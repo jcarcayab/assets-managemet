@@ -77,6 +77,23 @@ test banks — user `user_good`, password `pass_good`).
 - If the institution asks to log in again, the connection is flagged and "Reconectar" opens Link in
   update mode.
 
+## Crypto exchanges (Coinbase, Kraken)
+
+`backend/connections/{coinbase,kraken,exchange_sync}.py`, configured on the Conexiones page with **read-only**
+API keys (stored encrypted, never returned):
+
+- **Kraken:** a key with only *Query Funds*, *Query Closed Orders & Trades* and *Query Ledger Entries*.
+  Uses `Balance`, `TradesHistory` (USD/USDC/USDT pairs) and `Ledgers` (USD deposits/withdrawals, staking and
+  earn rewards). Asset codes are normalized (`XXBT`→BTC, `ZUSD`→USD, `SOL.S`/`SOL.F`→SOL).
+- **Coinbase:** a CDP API key with *View* permission only (keys that can trade or transfer are refused),
+  ES256 or Ed25519. Uses the v2 App API, which includes simple buys made in the app and the USD value of every
+  transaction (exact cost basis).
+- Each connection mirrors one portfolio account (new by default, or one you choose). Trades, staking rewards
+  (valued at receipt) and USD deposits are imported idempotently, then the account is reconciled with the
+  reported balances using the same opening/fix adjustments as Plaid (`connections/reconcile.py`). Crypto that
+  arrived by transfer from another wallet has no known cost and is valued at the current price.
+- `manage.py exchange_sync` runs daily from the scheduler.
+
 ## Domain model
 
 | Model | Purpose |
