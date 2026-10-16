@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, api } from '../api'
-import type { ExchangeConnection, ExchangeReport, PlaidAccount, PlaidItem, PlaidStatus, SyncReport } from '../api'
+import type {
+  ExchangeConnection,
+  ExchangeReport,
+  Liability,
+  PlaidAccount,
+  PlaidItem,
+  PlaidStatus,
+  SyncReport,
+} from '../api'
 import { FormModal } from '../components/FormModal'
 import { useAccounts } from '../hooks'
 import { dateTime, money } from '../format'
@@ -23,11 +31,19 @@ async function syncItem(id: number): Promise<SyncReport> {
 
 function AccountRow({ pa, onChange }: { pa: PlaidAccount; onChange: () => void }) {
   const accounts = useAccounts()
-  const supported = pa.type === 'investment' || pa.type === 'depository'
-  const value = !pa.enabled ? OFF : pa.account ? String(pa.account) : NEW
+  const debts = useQuery({ queryKey: ['/liabilities/', ''], queryFn: () => api<Liability[]>('/liabilities/') })
+  const isDebt = pa.type === 'credit' || pa.type === 'loan'
+  const supported = isDebt || pa.type === 'investment' || pa.type === 'depository'
+  const target = isDebt ? pa.liability : pa.account
+  const targetName = isDebt ? pa.liability_name : pa.account_name
+  const value = !pa.enabled ? OFF : target ? String(target) : NEW
+  const options = isDebt
+    ? (debts.data ?? []).map((d) => ({ id: d.id, name: d.name }))
+    : (accounts.data ?? []).map((a) => ({ id: a.id, name: a.name }))
 
   const update = async (v: string) => {
-    const body = v === OFF ? { enabled: false } : { enabled: true, account: v === NEW ? null : Number(v) }
+    const field = isDebt ? 'liability' : 'account'
+    const body = v === OFF ? { enabled: false } : { enabled: true, [field]: v === NEW ? null : Number(v) }
     await api(`/plaid/accounts/${pa.id}/`, { method: 'PATCH', body })
     onChange()
   }
@@ -44,18 +60,20 @@ function AccountRow({ pa, onChange }: { pa: PlaidAccount; onChange: () => void }
       <td>
         {supported ? (
           <select value={value} onChange={(e) => update(e.target.value)} aria-label={`Destino de ${pa.name}`}>
-            <option value={NEW}>{pa.account_name ? `→ ${pa.account_name}` : 'Crear cuenta nueva al sincronizar'}</option>
-            {(accounts.data ?? [])
-              .filter((a) => a.id !== pa.account)
-              .map((a) => (
-                <option key={a.id} value={a.id}>
-                  Usar “{a.name}”
+            <option value={NEW}>
+              {targetName ? `→ ${targetName}` : isDebt ? 'Crear deuda nueva al sincronizar' : 'Crear cuenta nueva al sincronizar'}
+            </option>
+            {options
+              .filter((o) => o.id !== target)
+              .map((o) => (
+                <option key={o.id} value={o.id}>
+                  Usar “{o.name}”
                 </option>
               ))}
             <option value={OFF}>No sincronizar</option>
           </select>
         ) : (
-          <span className="muted small">No compatible (tarjetas y préstamos van en Deudas)</span>
+          <span className="muted small">No compatible</span>
         )}
       </td>
     </tr>
@@ -125,7 +143,7 @@ function ItemCard({ item, refresh }: { item: PlaidItem; refresh: () => void }) {
       {report && !report.error && (
         <p className="pos small">
           {report.transactions} movimientos y {report.cash_flows} depósitos nuevos, {report.adjustments} ajustes de
-          conciliación{report.skipped ? `, ${report.skipped} sin equivalente (cubiertos por la conciliación)` : ''}.
+          conciliación{report.liabilities ? `, ${report.liabilities} deudas actualizadas` : ''}{report.skipped ? `, ${report.skipped} sin equivalente (cubiertos por la conciliación)` : ''}.
         </p>
       )}
       <div className="table-wrap flush">

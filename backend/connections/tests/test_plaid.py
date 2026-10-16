@@ -1,4 +1,5 @@
 import datetime as dt
+from decimal import Decimal as D
 from unittest import mock
 
 import pytest
@@ -6,7 +7,7 @@ import pytest
 from connections.models import PlaidItem
 from connections.plaid import PlaidClient, PlaidError
 from connections.sync import link_item, sync_item
-from portfolio.models import Account, AccountType, Asset, CashFlow, TaxTreatment, Transaction
+from portfolio.models import Account, AccountType, Asset, CashFlow, Liability, TaxTreatment, Transaction
 from portfolio.services.positions import compute_positions
 
 pytestmark = pytest.mark.django_db
@@ -86,6 +87,13 @@ class FakePlaid:
 
     def get_investment_transactions(self, access_token, start, end):
         return {"investment_transactions": TRANSACTIONS, "securities": SECURITIES}
+
+    liabilities = None  # None = the item has no Liabilities product
+
+    def get_liabilities(self, access_token):
+        if self.liabilities is None:
+            raise PlaidError("PRODUCTS_NOT_SUPPORTED", "no liabilities")
+        return self.liabilities
 
     def remove_item(self, access_token):
         self.removed.append(access_token)
@@ -179,6 +187,48 @@ def test_sold_position_bought_before_history_uses_first_known_price(user, item):
     opening = Transaction.objects.get(account=broker, external_id__startswith="plaid-adj:open")
     assert (opening.quantity, opening.price) == (10, 400)  # the first buy's price, not $0
     assert not any(p.symbol == "VOO" for p in compute_positions(user) if p.account == broker)
+
+
+def test_credit_cards_become_debts_and_follow_the_balance(user, item):
+    report = sync_item(item, FakePlaid())
+    assert report["liabilities"] == 1
+    card = Liability.objects.get(owner=user)
+    assert (card.name, card.kind, card.balance) == ("Fidelity Card ····4444", "credit_card", 800)
+    assert card.interest_rate_pct == 0  # no Liabilities product: the rate is left for the user
+
+    card.interest_rate_pct, card.promo_rate_pct, card.promo_end_date = D(24), D(0), dt.date(2027, 6, 30)
+    card.save()
+    ACCOUNTS_PAID = [{**a, "balances": {"current": 350}} if a["account_id"] == "cc1" else a for a in ACCOUNTS]
+    with mock.patch.object(FakePlaid, "get_accounts", return_value=ACCOUNTS_PAID):
+        sync_item(item, FakePlaid())
+    card.refresh_from_db()
+    assert card.balance == 350
+    assert (card.interest_rate_pct, card.promo_rate_pct) == (24, 0)  # user's terms untouched
+    assert Liability.objects.filter(owner=user).count() == 1
+
+
+def test_liabilities_product_fills_rate_and_minimum(user, item):
+    fake = FakePlaid()
+    fake.liabilities = {"credit": [{
+        "account_id": "cc1", "minimum_payment_amount": 35,
+        "aprs": [{"apr_type": "cash_apr", "apr_percentage": 29.99}, {"apr_type": "purchase_apr", "apr_percentage": 22.49}],
+    }]}
+    sync_item(item, fake)
+    card = Liability.objects.get(owner=user)
+    assert (card.interest_rate_pct, card.minimum_payment) == (D("22.49"), 35)
+
+
+def test_card_can_feed_an_existing_debt_or_be_skipped(api, user, item):
+    mine = Liability.objects.create(owner=user, name="Mi tarjeta", kind="credit_card", balance=0, interest_rate_pct=20)
+    cc1 = item.accounts.get(plaid_account_id="cc1")
+    assert api.patch(f"/api/plaid/accounts/{cc1.id}/", {"liability": mine.id}, format="json").status_code == 200
+    sync_item(item, FakePlaid())
+    mine.refresh_from_db()
+    assert mine.balance == 800
+    assert Liability.objects.filter(owner=user).count() == 1
+
+    assert api.patch(f"/api/plaid/accounts/{cc1.id}/", {"enabled": False}, format="json").status_code == 200
+    assert sync_item(item, FakePlaid())["liabilities"] == 0
 
 
 def test_existing_ticker_asset_is_reused(user, item, voo):

@@ -106,6 +106,10 @@ class PlaidClient:
                 break
         return {"investment_transactions": transactions, "securities": list(securities.values())}
 
+    def get_liabilities(self, access_token: str) -> dict:
+        """APRs and minimum payments; only works if the item has the Liabilities product."""
+        return self.post("/liabilities/get", {"access_token": access_token})["liabilities"]
+
     def remove_item(self, access_token: str) -> None:
         self.post("/item/remove", {"access_token": access_token})
 

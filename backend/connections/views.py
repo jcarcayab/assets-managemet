@@ -11,7 +11,7 @@ from connections.exchange_sync import sync_exchange
 from connections.models import ExchangeConnection, ExchangeProvider, PlaidAccount, PlaidItem
 from connections.plaid import PlaidError, configured, get_client
 from connections.sync import link_item, sync_item
-from portfolio.models import Account
+from portfolio.models import Account, Liability
 
 
 class PlaidThrottle(UserRateThrottle):
@@ -21,18 +21,25 @@ class PlaidThrottle(UserRateThrottle):
 class PlaidAccountSerializer(serializers.ModelSerializer):
     account = serializers.PrimaryKeyRelatedField(queryset=Account.objects.all(), allow_null=True, required=False)
     account_name = serializers.CharField(source="account.name", read_only=True, default=None)
+    liability = serializers.PrimaryKeyRelatedField(queryset=Liability.objects.all(), allow_null=True, required=False)
+    liability_name = serializers.CharField(source="liability.name", read_only=True, default=None)
 
     class Meta:
         model = PlaidAccount
         fields = [
             "id", "name", "official_name", "mask", "type", "subtype", "current_balance", "account", "account_name",
-            "enabled",
+            "liability", "liability_name", "enabled",
         ]
         read_only_fields = ["name", "official_name", "mask", "type", "subtype", "current_balance"]
 
     def validate_account(self, value):
         if value is not None and value.owner_id != self.context["request"].user.id:
             raise serializers.ValidationError("Cuenta no encontrada.")
+        return value
+
+    def validate_liability(self, value):
+        if value is not None and value.owner_id != self.context["request"].user.id:
+            raise serializers.ValidationError("Deuda no encontrada.")
         return value
 
 
@@ -106,7 +113,7 @@ class ExchangeView(PlaidAPIView):
 
 class ItemListView(APIView):
     def get(self, request):
-        items = PlaidItem.objects.filter(owner=request.user).prefetch_related("accounts__account")
+        items = PlaidItem.objects.filter(owner=request.user).prefetch_related("accounts__account", "accounts__liability")
         return Response(PlaidItemSerializer(items, many=True, context={"request": request}).data)
 
 

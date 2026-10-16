@@ -27,6 +27,8 @@ from portfolio.models import (
     AssetClass,
     CashFlow,
     CashFlowKind,
+    Liability,
+    LiabilityKind,
     PriceSource,
     TaxTreatment,
     Transaction,
@@ -114,6 +116,67 @@ def link_item(user, public_token: str, client: PlaidClient | None = None) -> Pla
     item.save()
     refresh_accounts(item, client.get_accounts(access_token))
     return item
+
+
+LIABILITY_KINDS = {
+    "credit card": LiabilityKind.CREDIT_CARD,
+    "paypal": LiabilityKind.CREDIT_CARD,
+    "mortgage": LiabilityKind.MORTGAGE,
+    "home equity": LiabilityKind.MORTGAGE,
+    "student": LiabilityKind.STUDENT,
+    "auto": LiabilityKind.AUTO,
+}
+
+
+def ensure_liability(pa: PlaidAccount) -> Liability | None:
+    """The debt mirroring this credit card / loan, created on first sync unless one was chosen."""
+    if not pa.enabled or pa.type not in ("credit", "loan"):
+        return None
+    if pa.liability_id:
+        return pa.liability
+    kind = LIABILITY_KINDS.get(pa.subtype, LiabilityKind.CREDIT_CARD if pa.type == "credit" else LiabilityKind.PERSONAL)
+    name = f"{pa.item.institution_name or 'Plaid'} {pa.name}" + (f" ····{pa.mask}" if pa.mask else "")
+    pa.liability = Liability.objects.create(
+        owner=pa.item.owner, name=name[:100], kind=kind, balance=Decimal(0), notes="Sincronizada con Plaid."
+    )
+    pa.save(update_fields=["liability"])
+    return pa.liability
+
+
+def liability_terms(data: dict) -> dict[str, dict]:
+    """account_id -> {"rate": APR %, "minimum": monthly payment} from Plaid's /liabilities/get."""
+    terms: dict[str, dict] = {}
+    for card in data.get("credit") or []:
+        aprs = card.get("aprs") or []
+        purchase = next((a for a in aprs if a.get("apr_type") == "purchase_apr"), aprs[0] if aprs else None)
+        terms[card["account_id"]] = {
+            "rate": purchase.get("apr_percentage") if purchase else None,
+            "minimum": card.get("minimum_payment_amount"),
+        }
+    for loan in data.get("student") or []:
+        terms[loan["account_id"]] = {
+            "rate": loan.get("interest_rate_percentage"), "minimum": loan.get("minimum_payment_amount"),
+        }
+    for loan in data.get("mortgage") or []:
+        terms[loan["account_id"]] = {
+            "rate": (loan.get("interest_rate") or {}).get("percentage"), "minimum": loan.get("next_monthly_payment"),
+        }
+    return terms
+
+
+def update_liability(liability: Liability, balance, terms: dict | None) -> None:
+    """Balance always follows the institution; rate and minimum only when Plaid reports them (the user's
+    values — and any promo setup, which Plaid doesn't describe reliably — are kept otherwise)."""
+    liability.balance = max(_d(balance), Decimal(0))  # a negative card balance is a credit, not a debt
+    fields = ["balance"]
+    if terms:
+        if terms.get("rate") is not None:
+            liability.interest_rate_pct = _d(terms["rate"])
+            fields.append("interest_rate_pct")
+        if terms.get("minimum") is not None:
+            liability.minimum_payment = _d(terms["minimum"])
+            fields.append("minimum_payment")
+    liability.save(update_fields=[*fields, "updated_at"])
 
 
 def ensure_account(pa: PlaidAccount) -> Account | None:
@@ -262,7 +325,10 @@ REAUTH = {"ITEM_LOGIN_REQUIRED", "PENDING_EXPIRATION", "ACCESS_NOT_GRANTED"}
 
 def sync_item(item: PlaidItem, client: PlaidClient | None = None) -> dict:
     client = client or get_client()
-    report = {"accounts": 0, "transactions": 0, "cash_flows": 0, "adjustments": 0, "skipped": 0, "error": None}
+    report = {
+        "accounts": 0, "transactions": 0, "cash_flows": 0, "adjustments": 0, "skipped": 0, "liabilities": 0,
+        "error": None,
+    }
     token = item.access_token
     today = timezone.localdate()
     try:
@@ -312,6 +378,18 @@ def sync_item(item: PlaidItem, client: PlaidClient | None = None) -> dict:
                     current = balances.get(plaid_id, {}).get("current")
                     if current is not None:
                         report["adjustments"] += reconcile(account, [], securities, cash_balance=_d(current))
+
+            debts = [(pa, lb) for pa in item.accounts.select_related("item", "liability") if (lb := ensure_liability(pa))]
+            if debts:
+                try:
+                    terms = liability_terms(client.get_liabilities(token))
+                except PlaidError:
+                    terms = {}  # item without the Liabilities product: balances only
+                for pa, liability in debts:
+                    current = balances.get(pa.plaid_account_id, {}).get("current")
+                    if current is not None:
+                        update_liability(liability, current, terms.get(pa.plaid_account_id))
+                        report["liabilities"] += 1
 
             item.last_synced_at = timezone.now()
             item.last_error = ""
