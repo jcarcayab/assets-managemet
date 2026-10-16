@@ -907,3 +907,16 @@ label.check {
 label.check input {
   width: auto;
 }
+
+.modal.wide {
+  width: min(820px, 100%);
+}
+
+.preview-table {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+tr.muted td {
+  color: var(--muted);
+}

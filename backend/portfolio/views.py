@@ -249,6 +249,38 @@ def contribution_limits_view(request):
     return Response(contribution_limits(request.user))
 
 
+MAX_CSV_BYTES = 5 * 1024 * 1024
+
+
+@api_view(["POST"])
+def csv_import_view(request):
+    """Preview (dry_run, the default) or import a CSV of movements into one of the user's accounts."""
+    from portfolio.services import csv_import
+
+    account = Account.objects.filter(owner=request.user, pk=request.data.get("account")).first()
+    upload = request.FILES.get("file")
+    if account is None:
+        return Response({"detail": "Elige una cuenta."}, status=status.HTTP_400_BAD_REQUEST)
+    if upload is None:
+        return Response({"detail": "Adjunta un archivo CSV."}, status=status.HTTP_400_BAD_REQUEST)
+    if upload.size > MAX_CSV_BYTES:
+        return Response({"detail": "El archivo pasa de 5 MB."}, status=status.HTTP_400_BAD_REQUEST)
+    raw = upload.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+    parsed = csv_import.parse(account, text)
+    result = csv_import.preview(parsed)
+    if str(request.data.get("dry_run", "true")).lower() in ("false", "0", "no"):
+        if parsed.errors:
+            return Response(
+                {**result, "detail": "Corrige los errores antes de importar."}, status=status.HTTP_400_BAD_REQUEST
+            )
+        result["created"] = csv_import.apply(account, parsed)
+    return Response(result)
+
+
 @api_view(["GET", "PATCH"])
 def settings_view(request):
     obj = UserSettings.for_user(request.user)

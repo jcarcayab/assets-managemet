@@ -47,6 +47,29 @@ export async function api<T = unknown>(path: string, init: { method?: string; bo
   return data as T
 }
 
+/** POST a multipart form (file uploads); errors come back like `api`'s. */
+export async function apiUpload<T = unknown>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json', 'X-CSRFToken': cookie('csrftoken') },
+    body: form,
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new ApiError(res.status, data)
+  return data as T
+}
+
+export type CsvPreview = {
+  rows: { line: number; kind: string; date: string; symbol: string; quantity: number; price: number; fees: number; amount: number; notes: string; status: 'new' | 'duplicate' }[]
+  errors: { line: number; error: string }[]
+  new_symbols: string[]
+  new_count: number
+  duplicate_count: number
+  created?: { transactions: number; cash_flows: number; assets: number; duplicates: number }
+  detail?: string
+}
+
 export const AUTH_CHANGED = 'auth-changed'
 
 /** Only same-site paths are allowed as post-login destinations. */

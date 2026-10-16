@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { CashFlow, Transaction, TransactionKind } from '../api'
 import { CrudPage } from '../components/CrudPage'
+import { CsvImport } from '../components/CsvImport'
 import type { FormValues } from '../components/FormModal'
 import { useAccounts, useAssets, useChoices } from '../hooks'
 import { formOf, money, qty, today, tone } from '../format'
@@ -36,6 +37,7 @@ export default function Transactions() {
   const [account, setAccount] = useState('')
   const [asset, setAsset] = useState('')
   const [kind, setKind] = useState('')
+  const [importing, setImporting] = useState(false)
   const accounts = useAccounts()
   const assets = useAssets()
   const choices = useChoices()
@@ -65,6 +67,10 @@ export default function Transactions() {
       {select('Cuenta', account, setAccount, accountOptions)}
       {tab === 'trades' && select('Activo', asset, setAsset, assetOptions)}
       {select('Tipo', kind, setKind, kindOptions)}
+      <button className="btn" onClick={() => setImporting(true)}>
+        Importar CSV
+      </button>
+      {importing && <CsvImport accounts={accountOptions} initialAccount={account} onClose={() => setImporting(false)} />}
     </>
   )
 
