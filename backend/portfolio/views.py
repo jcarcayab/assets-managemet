@@ -49,7 +49,7 @@ from portfolio.services.risk import compute_risk
 from portfolio.services.taxes import compute_tax_lots
 from portfolio.services.history import BENCHMARKS, update_history
 from portfolio.services.performance import compute_income, compute_performance
-from portfolio.services.planning import compute_budget, compute_debts, monte_carlo
+from portfolio.services.planning import compute_budget, compute_debts, contribution_limits, monte_carlo
 from portfolio.services.positions import compute_positions, compute_summary
 from portfolio.services.prices import refresh_prices
 from portfolio.services.snapshots import take_snapshot
@@ -242,6 +242,11 @@ def debts_view(request):
 @api_view(["GET"])
 def monte_carlo_view(request):
     return Response(monte_carlo(request.user, base=request.query_params.get("base", "net_worth_ex_private")))
+
+
+@api_view(["GET"])
+def contribution_limits_view(request):
+    return Response(contribution_limits(request.user))
 
 
 @api_view(["GET", "PATCH"])

@@ -28,6 +28,7 @@ urlpatterns = [
     path("budget/", views.budget_view),
     path("debts/", views.debts_view),
     path("monte-carlo/", views.monte_carlo_view),
+    path("contribution-limits/", views.contribution_limits_view),
     path("prices/refresh/", views.refresh_prices_view),
     path("settings/", views.settings_view),
     path("choices/", views.choices_view),

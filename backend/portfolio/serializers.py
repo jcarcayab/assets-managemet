@@ -257,6 +257,24 @@ class UserSettingsSerializer(serializers.ModelSerializer):
     def validate_target_allocation(self, value):
         return clean_category_weights(value)
 
+    def validate_return_assumptions(self, value):
+        from portfolio.services.planning import DEFAULT_ASSUMPTIONS
+
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Debe ser un objeto {clase: {return, volatility}}.")
+        clean = {}
+        for cls, numbers in value.items():
+            if cls not in DEFAULT_ASSUMPTIONS or not isinstance(numbers, dict):
+                raise serializers.ValidationError(f"Tipo de activo desconocido: {cls}")
+            try:
+                ret, vol = float(numbers["return"]), float(numbers["volatility"])
+            except (KeyError, TypeError, ValueError):
+                raise serializers.ValidationError(f"{cls}: faltan return y volatility numéricos.") from None
+            if not -50 <= ret <= 100 or not 0 <= vol <= 200:
+                raise serializers.ValidationError(f"{cls}: rendimiento entre -50 y 100, volatilidad entre 0 y 200.")
+            clean[cls] = {"return": ret, "volatility": vol}
+        return clean
+
     def validate_benchmark(self, value):
         from portfolio.services.history import BENCHMARKS
 

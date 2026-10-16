@@ -69,6 +69,7 @@ def _retiree(user, broker, usd, spending):
     deposit_cash(broker, usd, 1_000_000)
     s = UserSettings.for_user(user)
     s.annual_return_pct = s.expected_volatility_pct = s.inflation_pct = D(0)
+    s.projection_by_asset_class = False  # the single manual rate (0%), to make the paths deterministic
     s.current_age = s.retirement_age = 60
     s.life_expectancy = 70
     s.save()

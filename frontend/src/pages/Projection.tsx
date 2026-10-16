@@ -14,9 +14,9 @@ import {
   YAxis,
 } from 'recharts'
 import { api } from '../api'
-import type { MonteCarlo, Settings } from '../api'
+import type { ClassAssumption, ContributionLimits, MonteCarlo, Settings } from '../api'
 import { useSettings, useSummary, useWrite } from '../hooks'
-import { money } from '../format'
+import { money, pct } from '../format'
 import { PALETTE } from '../palette'
 
 type Params = Pick<
@@ -82,6 +82,156 @@ const FIELDS: { key: keyof Params; label: string; step?: string }[] = [
   { key: 'life_expectancy', label: 'Planear hasta la edad', step: '1' },
 ]
 
+type Edits = Record<string, { return: number; volatility: number }>
+
+/** Expected return and volatility per asset class: today's mix gives the portfolio's numbers for Monte Carlo. */
+function AssumptionsCard({ m }: { m: MonteCarlo }) {
+  const a = m.assumptions
+  const initial = () => Object.fromEntries(a.by_class.map((c) => [c.asset_class, { return: c.return_pct, volatility: c.volatility_pct }]))
+  const [byClass, setByClass] = useState(a.by_asset_class)
+  const [edits, setEdits] = useState<Edits>(initial)
+  const save = useWrite((body: Partial<Settings>) => api('/settings/', { method: 'PATCH', body }))
+
+  const isDefault = (c: ClassAssumption) =>
+    edits[c.asset_class].return === c.default_return_pct && edits[c.asset_class].volatility === c.default_volatility_pct
+  const dirty =
+    byClass !== a.by_asset_class ||
+    a.by_class.some((c) => edits[c.asset_class].return !== c.return_pct || edits[c.asset_class].volatility !== c.volatility_pct)
+  const submit = () =>
+    save.mutate({
+      projection_by_asset_class: byClass,
+      // Only what differs from the defaults is stored, so better defaults later still reach the rest.
+      return_assumptions: Object.fromEntries(a.by_class.filter((c) => !isDefault(c)).map((c) => [c.asset_class, edits[c.asset_class]])),
+    })
+  const set = (cls: string, key: 'return' | 'volatility', value: number) =>
+    setEdits({ ...edits, [cls]: { ...edits[cls], [key]: value } })
+
+  return (
+    <div className="card">
+      <h2>Supuestos por tipo de activo</h2>
+      <label className="check">
+        <input type="checkbox" checked={byClass} onChange={(e) => setByClass(e.target.checked)} /> Usar mi asignación actual
+        (si no, la tasa única de arriba)
+      </label>
+      <p className="muted small">
+        Con tu asignación de hoy: rendimiento esperado <strong>{pct(a.allocation_return_pct)}</strong> y volatilidad{' '}
+        <strong>{pct(a.allocation_volatility_pct)}</strong> al año, teniendo en cuenta cómo se mueven juntos (p. ej. crypto y
+        acciones). Son supuestos de largo plazo nominales; ajústalos si tienes otra visión.
+      </p>
+      <div className="table-wrap flush">
+        <table>
+          <thead>
+            <tr>
+              <th>Tipo de activo</th>
+              <th className="num">Peso hoy</th>
+              <th className="num">Rendimiento %</th>
+              <th className="num">Volatilidad %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {a.by_class.map((c) => (
+              <tr key={c.asset_class}>
+                <td>
+                  {c.label}
+                  {!isDefault(c) && <span className="muted small"> · propio</span>}
+                </td>
+                <td className="num">{pct(c.weight_pct, 0)}</td>
+                {(['return', 'volatility'] as const).map((key) => (
+                  <td className="num" key={key}>
+                    <input
+                      className="num-input"
+                      type="number"
+                      inputMode="decimal"
+                      step="0.5"
+                      aria-label={`${c.label} ${key === 'return' ? 'rendimiento' : 'volatilidad'}`}
+                      value={edits[c.asset_class][key]}
+                      onChange={(e) => set(c.asset_class, key, Number(e.target.value))}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="row-end">
+        <button
+          className="btn"
+          onClick={() =>
+            setEdits(Object.fromEntries(a.by_class.map((c) => [c.asset_class, { return: c.default_return_pct, volatility: c.default_volatility_pct }])))
+          }
+        >
+          Valores por defecto
+        </button>
+        {dirty && (
+          <button className="btn primary" onClick={submit} disabled={save.isPending}>
+            Guardar supuestos
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** This year's 401k / IRA contributions against the IRS limits. */
+function LimitsCard() {
+  const q = useQuery({ queryKey: ['contribution-limits'], queryFn: () => api<ContributionLimits>('/contribution-limits/') })
+  const d = q.data
+  if (!d) return null
+  const rows = [
+    { label: '401k: tus aportes (antes de impuestos / Roth)', used: d.k401.elective, limit: d.k401.elective_limit, room: d.k401.elective_room },
+    {
+      label: '401k: total (tú + empresa + after-tax)',
+      used: d.k401.total,
+      limit: d.k401.total_limit,
+      room: d.k401.total_room,
+    },
+    { label: 'IRA (Roth + tradicional)', used: d.ira.contributed, limit: d.ira.limit, room: d.ira.room },
+  ]
+  return (
+    <div className="card">
+      <h2>
+        Aportes de {d.year} vs límites del IRS <span className="muted small">· edad {d.age}</span>
+      </h2>
+      {d.limits_year !== d.year && (
+        <p className="muted small">Sin límites publicados para {d.year}: uso los de {d.limits_year}.</p>
+      )}
+      <div className="table-wrap flush">
+        <table>
+          <thead>
+            <tr>
+              <th>Cuenta</th>
+              <th className="num">Aportado</th>
+              <th className="num">Límite</th>
+              <th className="num">Te queda</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.label}>
+                <td>
+                  {r.label}
+                  <div className="bar-split mt-xs" role="img" aria-label={`${pct((r.used / r.limit) * 100, 0)} del límite`}>
+                    <span style={{ flex: Math.min(r.used, r.limit) }} className="liquid" />
+                    <span style={{ flex: Math.max(r.limit - r.used, 0) }} />
+                  </div>
+                </td>
+                <td className="num">{money(r.used, true)}</td>
+                <td className="num">{money(r.limit, true)}</td>
+                <td className={`num ${r.room > 0 ? '' : 'neg'}`}>{money(r.room, true)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="muted small">
+        Sale de los depósitos registrados este año (Plaid los trae del 401k; el match cuenta como aporte del empleador). Los aportes
+        “after-tax” no cuentan para tu límite personal, solo para el total. Incluye el catch-up si tienes 50+ (60–63: el ampliado).
+      </p>
+    </div>
+  )
+}
+
 function MonteCarloSection({ base }: { base: string }) {
   const mc = useQuery({ queryKey: ['monte-carlo', base], queryFn: () => api<MonteCarlo>(`/monte-carlo/?base=${base}`) })
   const m = mc.data
@@ -92,7 +242,8 @@ function MonteCarloSection({ base }: { base: string }) {
     <div className="card">
       <h2>Monte Carlo ({m.paths.toLocaleString()} escenarios, en dólares de hoy)</h2>
       <p className="muted small">
-        Retornos aleatorios con la volatilidad indicada.{' '}
+        Retornos aleatorios: {pct(m.assumptions.return_pct)} de media y {pct(m.assumptions.volatility_pct)} de volatilidad al año
+        {m.assumptions.by_asset_class ? ' (de tu asignación por tipo de activo)' : ' (tasa única)'}.{' '}
         {m.uses_budget
           ? `En el retiro gasta ${money(m.annual_spending, true)}/año (tu presupuesto), ajustado por inflación y menos Seguro Social.`
           : 'Sin presupuesto definido: retira la tasa de retiro sobre el saldo al jubilarte. Define tu Presupuesto para un cálculo más real.'}{' '}
@@ -118,6 +269,16 @@ function MonteCarloSection({ base }: { base: string }) {
             {m.fi_number === null ? 'requiere presupuesto' : m.fi_age ? `lo alcanzas ~${m.fi_age} años (mediana)` : 'no se alcanza en la mediana'}
           </span>
         </div>
+        {m.rmd.deferred_share_pct > 0 && (
+          <div className="card kpi">
+            <span className="kpi-label">Retiro mínimo obligatorio (RMD) a los {m.rmd.start_age}</span>
+            <strong className="kpi-value">{money(m.rmd.first_p50, true)}</strong>
+            <span className="kpi-sub">
+              mediana, $ de hoy · {pct(m.rmd.deferred_share_pct, 0)} de tu saldo es 401k/IRA tradicional · impuesto por retiros
+              forzados {money(m.rmd.forced_tax_p50, true)}
+            </span>
+          </div>
+        )}
       </div>
       <ResponsiveContainer width="100%" height={300}>
         <ComposedChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
@@ -136,6 +297,7 @@ function MonteCarloSection({ base }: { base: string }) {
           )}
         </ComposedChart>
       </ResponsiveContainer>
+      <AssumptionsCard key={JSON.stringify(m.assumptions)} m={m} />
     </div>
   )
 }
@@ -239,6 +401,8 @@ export default function Projection() {
       </div>
 
       <MonteCarloSection base={base} />
+
+      <LimitsCard />
 
       <details className="card">
         <summary>Tabla año por año (proyección determinista)</summary>
