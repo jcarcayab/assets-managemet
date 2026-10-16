@@ -218,7 +218,10 @@ class BudgetItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = BudgetItem
-        fields = ["id", "name", "kind", "kind_label", "category", "amount", "frequency", "monthly", "essential", "notes"]
+        fields = [
+            "id", "name", "kind", "kind_label", "category", "spending_category", "amount", "frequency", "monthly",
+            "essential", "notes",
+        ]
 
 
 class LiabilitySerializer(serializers.ModelSerializer):

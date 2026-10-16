@@ -108,8 +108,8 @@ function ItemCard({ item, refresh }: { item: PlaidItem; refresh: () => void }) {
       if (await openPlaidLink(link_token, { itemId: item.id })) setReport(await syncItem(item.id))
     })
 
-  // Bank interest needs Plaid Transactions, which the user grants once through Link (update mode).
-  const hasBank = item.accounts.some((pa) => pa.type === 'depository' && pa.enabled)
+  // Card and bank movements (spending, interest) need Plaid Transactions, granted once through Link (update mode).
+  const hasBank = item.accounts.some((pa) => (pa.type === 'depository' || pa.type === 'credit') && pa.enabled)
   const askInterest = hasBank && !item.needs_reauth && (!item.bank_transactions || !!item.transactions_error)
   const importInterest = () =>
     run(async () => {
@@ -145,7 +145,7 @@ function ItemCard({ item, refresh }: { item: PlaidItem; refresh: () => void }) {
           )}
           {askInterest && (
             <button className="btn" onClick={importInterest} disabled={busy}>
-              Importar intereses
+              Importar movimientos
             </button>
           )}
           <button className="btn danger" onClick={disconnect} disabled={busy}>
@@ -157,14 +157,14 @@ function ItemCard({ item, refresh }: { item: PlaidItem; refresh: () => void }) {
       {item.last_error && !item.needs_reauth && <p className="error small">{item.last_error}</p>}
       {item.bank_transactions && item.transactions_error && (
         <p className="muted small">
-          Los intereses necesitan que autorices “Transacciones” en Plaid: pulsa “Importar intereses”. ({item.transactions_error})
+          Los movimientos necesitan que autorices “Transacciones” en Plaid: pulsa “Importar movimientos”. ({item.transactions_error})
         </p>
       )}
       {error && <p className="error">{error}</p>}
       {report && !report.error && (
         <p className="pos small">
           {report.transactions} movimientos y {report.cash_flows} depósitos nuevos, {report.adjustments} ajustes de
-          conciliación{report.liabilities ? `, ${report.liabilities} deudas actualizadas` : ''}{report.interest ? `, ${report.interest} intereses` : ''}{report.skipped ? `, ${report.skipped} sin equivalente (cubiertos por la conciliación)` : ''}.
+          conciliación{report.liabilities ? `, ${report.liabilities} deudas actualizadas` : ''}{report.interest ? `, ${report.interest} intereses` : ''}{report.spending ? `, ${report.spending} movimientos de gasto` : ''}{report.skipped ? `, ${report.skipped} sin equivalente (cubiertos por la conciliación)` : ''}.
         </p>
       )}
       <div className="table-wrap flush">
