@@ -41,6 +41,7 @@ from portfolio.services.positions import cash_asset
 HISTORY_DAYS = 730  # Plaid's investment history limit (24 months)
 OVERLAP_DAYS = 30  # re-read recent days on each sync to catch late-posted transactions
 TX_PREFIX = "plaid:"
+BANK_PREFIX = "plaid-bank:"
 ADJ_PREFIX = "plaid-adj:"
 
 # Plaid account subtype -> (our account type, tax treatment override)
@@ -338,6 +339,50 @@ def reconcile(account: Account, holdings: list[dict], securities: dict, cash_bal
 # -- sync ------------------------------------------------------------------------------------------
 
 NO_INVESTMENTS = {"PRODUCTS_NOT_SUPPORTED", "NO_INVESTMENT_ACCOUNTS", "PRODUCT_NOT_READY"}
+
+
+def is_interest(t: dict) -> bool:
+    """Interest paid into a bank account (Plaid amounts are positive when money leaves the account)."""
+    pfc = (t.get("personal_finance_category") or {}).get("detailed")
+    return not t.get("pending") and _d(t.get("amount")) < 0 and (
+        pfc == "INCOME_INTEREST_EARNED" or (t.get("category") or [])[-1:] == ["Interest Earned"]
+    )
+
+
+def fetch_bank_transactions(item: PlaidItem, client: PlaidClient) -> dict | None:
+    """New bank transactions, or None when Transactions is off or not granted yet (noted on the item)."""
+    if not item.bank_transactions:
+        return None
+    try:
+        changes = client.sync_transactions(item.access_token, item.transactions_cursor)
+    except PlaidError as exc:
+        if exc.code in REAUTH:
+            raise
+        item.transactions_error = f"{exc.code}: {exc.message}"[:300]
+        return None
+    item.transactions_error = ""
+    return changes
+
+
+def apply_bank_interest(changes: dict, mapped: dict) -> int:
+    """Record interest on bank (depository) accounts as income in their cash; returns how many were new."""
+    removed = [f"{BANK_PREFIX}{r['transaction_id']}" for r in changes["removed"]]
+    Transaction.objects.filter(external_id__in=removed).delete()
+    new = 0
+    for t in changes["added"] + changes["modified"]:
+        target = mapped.get(t["account_id"])
+        if target is None or target[0].type != "depository" or not is_interest(t):
+            continue
+        account = target[1]
+        _, created = Transaction.objects.update_or_create(
+            account=account, external_id=f"{BANK_PREFIX}{t['transaction_id']}",
+            defaults={
+                "kind": TransactionKind.INTEREST, "asset": cash_asset(account.owner),
+                "date": dt.date.fromisoformat(t["date"]), "amount": -_d(t["amount"]), "notes": (t.get("name") or "")[:200],
+            },
+        )
+        new += created
+    return new
 REAUTH = {"ITEM_LOGIN_REQUIRED", "PENDING_EXPIRATION", "ACCESS_NOT_GRANTED"}
 
 
@@ -345,7 +390,7 @@ def sync_item(item: PlaidItem, client: PlaidClient | None = None) -> dict:
     client = client or get_client()
     report = {
         "accounts": 0, "transactions": 0, "cash_flows": 0, "adjustments": 0, "skipped": 0, "liabilities": 0,
-        "error": None,
+        "interest": 0, "error": None,
     }
     token = item.access_token
     today = timezone.localdate()
@@ -369,6 +414,7 @@ def sync_item(item: PlaidItem, client: PlaidClient | None = None) -> dict:
             )
             txs = client.get_investment_transactions(token, start, today)
         securities = {s["security_id"]: s for s in (holdings or {}).get("securities", []) + txs["securities"]}
+        bank = fetch_bank_transactions(item, client)
 
         with db_tx.atomic():
             mapped: dict[str, tuple[PlaidAccount, Account]] = {}
@@ -387,6 +433,10 @@ def sync_item(item: PlaidItem, client: PlaidClient | None = None) -> dict:
                     report["transactions" if result == "tx" else "cash_flows"] += 1
                 elif result is None:
                     report["skipped"] += 1
+
+            if bank is not None:
+                report["interest"] = apply_bank_interest(bank, mapped)
+                item.transactions_cursor = bank["cursor"]
 
             for plaid_id, (pa, account) in mapped.items():
                 if pa.type == "investment" and holdings is not None:
@@ -412,7 +462,9 @@ def sync_item(item: PlaidItem, client: PlaidClient | None = None) -> dict:
             item.last_synced_at = timezone.now()
             item.last_error = ""
             item.needs_reauth = False
-            item.save(update_fields=["last_synced_at", "last_error", "needs_reauth"])
+            item.save(
+                update_fields=["last_synced_at", "last_error", "needs_reauth", "transactions_cursor", "transactions_error"]
+            )
     except PlaidError as exc:
         item.last_error = f"{exc.code}: {exc.message}"[:300]
         item.needs_reauth = exc.code in REAUTH

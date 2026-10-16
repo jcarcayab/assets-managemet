@@ -527,6 +527,8 @@ export type PlaidItem = {
   last_synced_at: string | null
   last_error: string
   needs_reauth: boolean
+  bank_transactions: boolean
+  transactions_error: string
   accounts: PlaidAccount[]
 }
 export type SyncReport = {
@@ -536,6 +538,7 @@ export type SyncReport = {
   adjustments: number
   skipped: number
   liabilities: number
+  interest: number
   error: { code: string; message: string; needs_reauth: boolean } | null
 }
 

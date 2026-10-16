@@ -339,9 +339,12 @@ def _group(positions, key_fn, label_fn):
     groups: dict = {}
     for p in positions:
         k = key_fn(p)
-        g = groups.setdefault(k, {"key": k, "label": label_fn(p), "cost": ZERO, "value": ZERO})
+        g = groups.setdefault(k, {"key": k, "label": label_fn(p), "cost": ZERO, "value": ZERO, "interest": ZERO})
         g["cost"] += p.cost_basis
         g["value"] += p.market_value
+        if p.asset_class == AssetClass.CASH:
+            # Interest paid in cash is already part of the cash's cost, so value - cost would hide it.
+            g["interest"] += p.income
     return groups
 
 
@@ -358,7 +361,7 @@ def compute_summary(user) -> dict:
     def finish(groups: dict) -> list[dict]:
         rows = []
         for g in groups.values():
-            g["gain"] = g["value"] - g["cost"]
+            g["gain"] = g["value"] - g["cost"] + g.get("interest", ZERO)
             g["gain_pct"] = pct(g["gain"], abs(g["cost"]))
             g["weight"] = pct(g["value"], assets_value)
             rows.append(g)
@@ -368,7 +371,7 @@ def compute_summary(user) -> dict:
     by_account = _group(positions, lambda p: p.account.id, lambda p: p.account.name)
     # Accounts with no holdings still show up (e.g. an empty Roth IRA).
     for acc in accounts.values():
-        g = by_account.setdefault(acc.id, {"key": acc.id, "label": acc.name, "cost": ZERO, "value": ZERO})
+        g = by_account.setdefault(acc.id, {"key": acc.id, "label": acc.name, "cost": ZERO, "value": ZERO, "interest": ZERO})
         g.update(
             institution=acc.institution, account_type=acc.account_type, is_liquid=acc.is_liquid,
             tax_treatment=acc.tax_treatment,

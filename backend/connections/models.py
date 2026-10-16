@@ -17,6 +17,10 @@ class PlaidItem(models.Model):
     last_synced_at = models.DateTimeField(null=True, blank=True)
     last_error = models.CharField(max_length=300, blank=True)
     needs_reauth = models.BooleanField(default=False, help_text="La institución pide volver a iniciar sesión en Plaid Link.")
+    # Plaid Transactions (billed per item): only turned on where bank interest is wanted.
+    bank_transactions = models.BooleanField(default=False, help_text="Importar intereses de cuentas bancarias.")
+    transactions_cursor = models.TextField(blank=True)
+    transactions_error = models.CharField(max_length=300, blank=True)
 
     class Meta:
         ordering = ["institution_name", "id"]

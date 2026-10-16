@@ -12,6 +12,8 @@ BASE_URLS = {
 TRANSACTIONS_PAGE = 500
 
 
+TRANSACTION_DAYS = 730  # history Plaid pulls the first time Transactions is turned on
+
 LINK_PRODUCTS = {
     "investments": (["investments"], ["liabilities"]),  # brokers and retirement accounts
     "credit": (["liabilities"], ["investments"]),  # credit cards and loans (e.g. Chase cards)
@@ -55,7 +57,9 @@ class PlaidClient:
 
     # -- Link ----------------------------------------------------------------------------------------
 
-    def create_link_token(self, user_id: int, access_token: str | None = None, kind: str = "investments") -> str:
+    def create_link_token(
+        self, user_id: int, access_token: str | None = None, kind: str = "investments", add_transactions: bool = False
+    ) -> str:
         body = {
             "client_name": "Patrimonio",
             "user": {"client_user_id": str(user_id)},
@@ -64,6 +68,9 @@ class PlaidClient:
         }
         if access_token:
             body["access_token"] = access_token  # update mode: re-authenticate an existing item
+            if add_transactions:  # ...and ask the user to also share bank transactions
+                body["additional_consented_products"] = ["transactions"]
+                body["transactions"] = {"days_requested": TRANSACTION_DAYS}
         else:
             # Plaid only offers accounts that have every product in `products`, so a bank with just credit
             # cards would be "not eligible" for investments; `optional_products` adds the other when supported.
@@ -113,6 +120,27 @@ class PlaidClient:
             if not page or offset >= data.get("total_investment_transactions", 0):
                 break
         return {"investment_transactions": transactions, "securities": list(securities.values())}
+
+    def sync_transactions(self, access_token: str, cursor: str = "") -> dict:
+        """Bank transactions changed since `cursor` (everything on the first call): added, modified, removed."""
+        out = {"added": [], "modified": [], "removed": [], "cursor": cursor}
+        for _ in range(2):  # Plaid asks to restart the whole pass if data changed while paging
+            out = {"added": [], "modified": [], "removed": [], "cursor": cursor}
+            try:
+                while True:
+                    body = {"access_token": access_token, "count": 500, "options": {"days_requested": TRANSACTION_DAYS}}
+                    if out["cursor"]:
+                        body["cursor"] = out["cursor"]
+                    data = self.post("/transactions/sync", body)
+                    for key in ("added", "modified", "removed"):
+                        out[key] += data.get(key, [])
+                    out["cursor"] = data.get("next_cursor", out["cursor"])
+                    if not data.get("has_more"):
+                        return out
+            except PlaidError as exc:
+                if exc.code != "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION":
+                    raise
+        return out
 
     def get_liabilities(self, access_token: str) -> dict:
         """APRs and minimum payments; only works if the item has the Liabilities product."""

@@ -48,7 +48,10 @@ class PlaidItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PlaidItem
-        fields = ["id", "institution_name", "created_at", "last_synced_at", "last_error", "needs_reauth", "accounts"]
+        fields = [
+            "id", "institution_name", "created_at", "last_synced_at", "last_error", "needs_reauth", "bank_transactions",
+            "transactions_error", "accounts",
+        ]
 
 
 def plaid_error(exc: PlaidError) -> Response:
@@ -86,14 +89,23 @@ class LinkTokenView(PlaidAPIView):
         if not self.client:
             return self.not_configured()
         item_id = request.data.get("item")
-        access_token = self.item(request, item_id).access_token if item_id else None
+        item = self.item(request, item_id) if item_id else None
         kind = request.data.get("kind", "investments")
         if kind not in LINK_PRODUCTS:
             return Response({"detail": f"Tipo de conexión desconocido: {kind}"}, status=status.HTTP_400_BAD_REQUEST)
+        add_transactions = bool(item and request.data.get("transactions"))
         try:
-            return Response({"link_token": self.client.create_link_token(request.user.id, access_token, kind=kind)})
+            token = self.client.create_link_token(
+                request.user.id, item.access_token if item else None, kind=kind, add_transactions=add_transactions
+            )
         except PlaidError as exc:
             return plaid_error(exc)
+        if add_transactions and not item.bank_transactions:
+            # Remembered now (not after Link) so it survives an OAuth bank's redirect; until the user grants
+            # the permission, syncs just note it in transactions_error.
+            item.bank_transactions = True
+            item.save(update_fields=["bank_transactions"])
+        return Response({"link_token": token})
 
 
 class ExchangeView(PlaidAPIView):
