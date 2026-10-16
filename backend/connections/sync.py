@@ -18,7 +18,7 @@ from decimal import Decimal
 from django.db import transaction as db_tx
 from django.utils import timezone
 
-from connections.models import BankTransaction, PlaidAccount, PlaidItem
+from connections.models import PlaidAccount, PlaidItem
 from connections.plaid import PlaidClient, PlaidError, get_client
 from connections.reconcile import Target, reconcile_account
 from portfolio.models import (
@@ -364,34 +364,6 @@ def fetch_bank_transactions(item: PlaidItem, client: PlaidClient) -> dict | None
     return changes
 
 
-def store_bank_transactions(item: PlaidItem, changes: dict) -> int:
-    """Keep posted card / bank movements (to compare spending with the budget); returns how many were new."""
-    accounts = {
-        pa.plaid_account_id: pa for pa in item.accounts.all() if pa.enabled and pa.type in ("depository", "credit")
-    }
-    removed = [r["transaction_id"] for r in changes["removed"]]
-    BankTransaction.objects.filter(owner=item.owner, transaction_id__in=removed).delete()
-    new = 0
-    for t in changes["added"] + changes["modified"]:
-        pa = accounts.get(t["account_id"])
-        if pa is None or t.get("pending"):
-            continue  # pending ones come back as new once they post
-        pfc = t.get("personal_finance_category") or {}
-        _, created = BankTransaction.objects.update_or_create(
-            transaction_id=t["transaction_id"],
-            defaults={
-                "owner": item.owner, "plaid_account": pa,
-                # The day you bought it, not the day it posted, so purchases land in the right month.
-                "date": dt.date.fromisoformat(t.get("authorized_date") or t["date"]),
-                "amount": _d(t.get("amount")), "name": (t.get("name") or "")[:200],
-                "merchant": (t.get("merchant_name") or "")[:200],
-                "category": (pfc.get("primary") or "")[:40], "detailed_category": (pfc.get("detailed") or "")[:80],
-            },
-        )
-        new += created
-    return new
-
-
 def apply_bank_interest(changes: dict, mapped: dict) -> int:
     """Record interest on bank (depository) accounts as income in their cash; returns how many were new."""
     removed = [f"{BANK_PREFIX}{r['transaction_id']}" for r in changes["removed"]]
@@ -418,7 +390,7 @@ def sync_item(item: PlaidItem, client: PlaidClient | None = None) -> dict:
     client = client or get_client()
     report = {
         "accounts": 0, "transactions": 0, "cash_flows": 0, "adjustments": 0, "skipped": 0, "liabilities": 0,
-        "interest": 0, "spending": 0, "error": None,
+        "interest": 0, "error": None,
     }
     token = item.access_token
     today = timezone.localdate()
@@ -464,7 +436,6 @@ def sync_item(item: PlaidItem, client: PlaidClient | None = None) -> dict:
 
             if bank is not None:
                 report["interest"] = apply_bank_interest(bank, mapped)
-                report["spending"] = store_bank_transactions(item, bank)
                 item.transactions_cursor = bank["cursor"]
 
             for plaid_id, (pa, account) in mapped.items():
