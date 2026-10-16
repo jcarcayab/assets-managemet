@@ -225,34 +225,50 @@ def compute_positions(user, include_closed: bool = False) -> list[Position]:
 
     positions = [p for p in ledger.positions.values() if include_closed or p.quantity != 0]
 
-    for grant in EquityGrant.objects.filter(account__owner=user, account__archived=False).select_related("account"):
+    grants = EquityGrant.objects.filter(account__owner=user, account__archived=False)
+    for grant in grants.select_related("account").prefetch_related("exercises"):
         vested = grant.vested_quantity()
-        name = grant.get_grant_type_display() if grant.grant_type == GrantType.SHARES else (
-            f"Opciones {grant.grant_type.upper()}" + (" ejercidas" if grant.exercised else " sin ejercer")
-        )
-        positions.append(
-            Position(
+
+        def grant_position(name, quantity, cost, price, is_option):
+            return Position(
                 account=grant.account,
                 asset=None,
                 symbol=grant.company,
                 name=name,
                 asset_class=AssetClass.PRIVATE_EQUITY,
-                quantity=vested,
-                cost_basis=grant.cost_basis,
-                price=grant.per_share_value,
+                quantity=quantity,
+                cost_basis=cost,
+                price=price,
                 underlying=grant.company,
                 sector=grant.sector,
                 exposures={"private_equity": HUNDRED},
                 extra={
                     "equity_grant_id": grant.id,
                     "grant_type": grant.grant_type,
-                    "is_option": grant.is_option,
+                    "is_option": is_option,
                     "strike": grant.strike,
                     "fmv": grant.fmv,
                     "unvested": grant.quantity - vested,
                 },
             )
-        )
+
+        if not grant.is_option:
+            positions.append(
+                grant_position(grant.get_grant_type_display(), vested, grant.cost_basis, grant.share_value, False)
+            )
+            continue
+        # Options split in two: those still open (intrinsic value) and the shares already exercised (FMV).
+        kind = grant.grant_type.upper()
+        exercised = grant.exercised_quantity()
+        if grant.open_options() or not exercised:
+            positions.append(
+                grant_position(f"Opciones {kind} sin ejercer", grant.open_options(), ZERO, grant.per_share_value, True)
+            )
+        if exercised:
+            positions.append(
+                grant_position(f"Acciones (opciones {kind} ejercidas)", exercised, grant.shares_cost_basis,
+                               grant.share_value, False)
+            )
 
     for p in positions:
         p.finalize()
