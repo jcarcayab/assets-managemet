@@ -50,6 +50,18 @@ def net_units(account: Account, asset: Asset, prefix: str) -> Decimal:
     return net + sum(transfers_in.values_list("quantity", flat=True), Decimal(0))
 
 
+def first_trade_price(account: Account, asset: Asset, prefix: str) -> Decimal | None:
+    return (
+        Transaction.objects.filter(
+            account=account, asset=asset, kind__in=[TransactionKind.BUY, TransactionKind.SELL], price__gt=0
+        )
+        .exclude(external_id__startswith=prefix)
+        .order_by("date", "id")
+        .values_list("price", flat=True)
+        .first()
+    )
+
+
 def reconcile_account(
     account: Account, targets: dict[int, Target], *, prefix: str, source: str, cash_balance: Decimal | None = None
 ) -> int:
@@ -78,13 +90,18 @@ def reconcile_account(
             continue
         opening = t.quantity - net_units(account, t.asset, prefix)
         if opening > EPS:
-            unit = t.cost / t.quantity if t.cost is not None and t.quantity else t.price
+            if t.cost is not None and t.quantity:
+                unit, how = t.cost / t.quantity, "costo promedio reportado"
+            elif first_price := first_trade_price(account, t.asset, prefix):
+                # Units bought before the available history: the earliest known price is the closest estimate.
+                unit, how = first_price, "costo estimado con el primer precio conocido"
+            else:
+                unit, how = t.price, "valorado al precio actual"
             Transaction.objects.create(
                 account=account, asset=t.asset, kind=TransactionKind.BUY,
                 date=(first_date - dt.timedelta(days=1)) if first_date else today,
                 quantity=opening, price=max(unit, Decimal(0)), external_id=f"{prefix}open:{t.asset.id}",
-                notes=f"Saldo anterior al historial disponible en {source}"
-                + (" (costo promedio reportado)." if t.cost is not None else " (valorado al precio actual)."),
+                notes=f"Saldo anterior al historial disponible en {source} ({how}).",
             )
             created += 1
 
