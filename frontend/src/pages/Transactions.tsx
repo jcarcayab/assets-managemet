@@ -191,14 +191,15 @@ export default function Transactions() {
           help: 'Se abona (o descuenta) del efectivo de la cuenta automáticamente.',
         },
         { name: 'external_id', label: 'Order ID', show: is('buy', 'sell') },
+        { name: 'employer_paid', label: 'Pagado por el empleador (match): costo $0 para ti', type: 'checkbox', show: is('buy') },
         { name: 'notes', label: 'Notas', type: 'textarea' },
       ]}
       defaults={{
         kind: 'buy', date: today(), account, asset: '', to_account: '', quantity: '', price: '', fees: '0', amount: '',
-        external_id: '', notes: '',
+        external_id: '', employer_paid: false, notes: '',
       }}
       toForm={(r) =>
-        formOf(r, ['kind', 'date', 'account', 'asset', 'to_account', 'quantity', 'price', 'fees', 'amount', 'external_id', 'notes'])
+        formOf(r, ['kind', 'date', 'account', 'asset', 'to_account', 'quantity', 'price', 'fees', 'amount', 'external_id', 'employer_paid', 'notes'])
       }
     />
   )

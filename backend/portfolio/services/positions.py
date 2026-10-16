@@ -157,7 +157,8 @@ class Ledger:
         pos = self.position(tx.account, tx.asset)
         kind = tx.kind
         if kind == TransactionKind.BUY:
-            cost = tx.quantity * tx.price + tx.fees
+            # Bought with the employer's match: free to you, so its whole value shows as gain.
+            cost = ZERO if tx.employer_paid else tx.quantity * tx.price + tx.fees
             pos.quantity += tx.quantity
             pos.cost_basis += cost
             if tx.quantity:
