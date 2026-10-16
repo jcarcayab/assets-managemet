@@ -93,6 +93,50 @@ def test_kraken_errors_raise():
         client.private("Balance")
 
 
+def _kraken_resp(body):
+    resp = mock.Mock(status_code=200)
+    resp.json.return_value = body
+    return resp
+
+
+def test_kraken_waits_and_retries_when_rate_limited():
+    client = KrakenClient("key", base64.b64encode(b"secret").decode())
+    responses = [_kraken_resp({"error": ["EAPI:Rate limit exceeded"]}), _kraken_resp({"error": [], "result": {"ok": 1}})]
+    with (
+        mock.patch("connections.kraken.requests.post", side_effect=responses),
+        mock.patch("connections.kraken.time.sleep") as sleep,
+    ):
+        assert client.private("Ledgers") == {"ok": 1}
+    assert mock.call(10) in sleep.call_args_list  # backed off before retrying
+
+
+def test_kraken_gives_up_after_repeated_rate_limits():
+    client = KrakenClient("key", base64.b64encode(b"secret").decode())
+    limited = _kraken_resp({"error": ["EAPI:Rate limit exceeded"]})
+    with (
+        mock.patch("connections.kraken.requests.post", return_value=limited),
+        mock.patch("connections.kraken.time.sleep"),
+        pytest.raises(ExchangeError, match="Rate limit"),
+    ):
+        client.private("Ledgers")
+
+
+def test_kraken_paces_history_queries():
+    client = KrakenClient("key", base64.b64encode(b"secret").decode())
+    ok = _kraken_resp({"error": [], "result": {}})
+    with (
+        mock.patch("connections.kraken.requests.post", return_value=ok),
+        mock.patch("connections.kraken.time.monotonic", return_value=client._counter_at),  # no time passes
+        mock.patch("connections.kraken.time.sleep") as sleep,
+    ):
+        for _ in range(7):
+            client.private("Ledgers")  # 7 x 2 = 14 fits under 15
+        sleep.assert_not_called()
+        client.private("Ledgers")  # 16 would not: wait for one point to decay
+    [(wait,)] = [c.args for c in sleep.call_args_list]
+    assert wait == pytest.approx(1 / 0.33)
+
+
 # -- Coinbase --------------------------------------------------------------------------------------
 
 
