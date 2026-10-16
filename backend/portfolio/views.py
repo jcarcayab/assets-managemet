@@ -1,6 +1,7 @@
 from django.db.models.deletion import ProtectedError, RestrictedError
 from rest_framework import status, viewsets
 from rest_framework.decorators import api_view
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
 from portfolio.models import (
@@ -83,6 +84,19 @@ class OwnedViewSet(viewsets.ModelViewSet):
             )
 
 
+class OptionalPagination(PageNumberPagination):
+    """Pages only when the client asks for one (`?page=`); without it the full list comes back as before."""
+
+    page_size = 100
+    page_size_query_param = "page_size"
+    max_page_size = 500
+
+    def paginate_queryset(self, queryset, request, view=None):
+        if self.page_query_param not in request.query_params:
+            return None
+        return super().paginate_queryset(queryset, request, view)
+
+
 class AccountViewSet(OwnedViewSet):
     queryset = Account.objects.all()
     serializer_class = AccountSerializer
@@ -95,8 +109,9 @@ class AssetViewSet(OwnedViewSet):
 
 
 class TransactionViewSet(OwnedViewSet):
-    queryset = Transaction.objects.select_related("account", "asset")
+    queryset = Transaction.objects.select_related("account", "asset", "to_account")
     serializer_class = TransactionSerializer
+    pagination_class = OptionalPagination
     owner_path = "account__owner"
     filter_params = ("account", "asset", "kind")
 
@@ -104,6 +119,7 @@ class TransactionViewSet(OwnedViewSet):
 class CashFlowViewSet(OwnedViewSet):
     queryset = CashFlow.objects.select_related("account")
     serializer_class = CashFlowSerializer
+    pagination_class = OptionalPagination
     owner_path = "account__owner"
     filter_params = ("account",)
 

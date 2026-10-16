@@ -72,6 +72,7 @@ export default function Transactions() {
         noun="Depósito"
         endpoint="/cash-flows/"
         query={query}
+        paginated
         actions={filter}
         intro={
           <>
@@ -109,6 +110,7 @@ export default function Transactions() {
       noun="Movimiento"
       endpoint="/transactions/"
       query={query}
+      paginated
       actions={filter}
       intro={tabs}
       emptyText="No hay movimientos. Registra una compra para empezar."
