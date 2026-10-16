@@ -22,6 +22,10 @@ from connections.exchange_data import CASH_SYMBOLS, CashMove, ExchangeError, Rew
 HOST = "api.coinbase.com"
 TRADE_TYPES = {"buy", "sell", "advanced_trade_fill", "trade"}
 REWARD_TYPES = {"staking_reward", "inflation_reward", "interest", "earn_payout", "reward"}
+# Crypto sent to / received from outside Coinbase. Its original cost is unknown here, so it enters (or leaves)
+# at the market value Coinbase reports for that day. Moves between Coinbase's own wallets (staking_transfer,
+# unstaking_transfer…) cancel out and stay skipped.
+TRANSFER_TYPES = {"send", "receive"}
 
 
 def _b64url(data: bytes) -> str:
@@ -148,5 +152,8 @@ class CoinbaseClient:
             snap.trades.append(Trade(ext, date, symbol, "buy" if amount > 0 else "sell", qty, price))
         elif kind in REWARD_TYPES and amount > 0:
             snap.rewards.append(Reward(ext, date, symbol, amount, usd))
+        elif kind in TRANSFER_TYPES and usd:
+            qty = abs(amount)
+            snap.trades.append(Trade(ext, date, symbol, "buy" if amount > 0 else "sell", qty, usd / qty))
         else:
             snap.skipped += 1  # sends/receives and other moves without cost: covered by reconciliation
