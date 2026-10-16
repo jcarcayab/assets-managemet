@@ -14,7 +14,7 @@ from decimal import Decimal
 
 import requests
 
-from connections.exchange_data import CASH_SYMBOLS, CashMove, ExchangeError, Reward, Snapshot, Trade
+from connections.exchange_data import CASH_SYMBOLS, CashMove, ExchangeError, Reward, Snapshot, Trade, Transfer
 
 API = "https://api.kraken.com"
 
@@ -116,11 +116,11 @@ class KrakenClient:
     def public(self, method: str) -> dict:
         return self._result(requests.get(f"{API}/0/public/{method}", timeout=30))
 
-    def _paged(self, method: str, key: str, since: dt.date | None = None) -> dict:
+    def _paged(self, method: str, key: str, since: dt.date | None = None, **filters) -> dict:
         rows, offset = {}, 0
         start = {"start": int(dt.datetime.combine(since, dt.time(), tzinfo=dt.UTC).timestamp())} if since else {}
         while True:
-            result = self.private(method, {"ofs": offset, **start})
+            result = self.private(method, {"ofs": offset, **start, **filters})
             page = result.get(key, {})
             rows.update(page)
             offset += len(page)
@@ -157,14 +157,34 @@ class KrakenClient:
                 )
             )
 
-        for lid, entry in self._paged("Ledgers", "ledger", since).items():
+        self._ledger_entries(snap, self._paged("Ledgers", "ledger", since))
+        return snap
+
+    def transfers_snapshot(self) -> Snapshot:
+        """Balances plus every deposit/withdrawal ever (a few calls), to backfill crypto transfers."""
+        snap = Snapshot()
+        for code, amount in self.private("Balance").items():
+            if Decimal(amount):
+                snap.add_balance(kraken_symbol(code), Decimal(amount))
+        for kind in ("deposit", "withdrawal"):
+            self._ledger_entries(snap, self._paged("Ledgers", "ledger", type=kind))
+        return snap
+
+    @staticmethod
+    def _ledger_entries(snap: Snapshot, entries: dict) -> None:
+        for lid, entry in entries.items():
             symbol, amount = kraken_symbol(entry["asset"]), Decimal(entry["amount"])
             kind, subtype = entry.get("type", ""), entry.get("subtype", "")
+            fee = Decimal(entry.get("fee", "0"))
             if kind in ("deposit", "withdrawal") and symbol in CASH_SYMBOLS:
                 snap.cash_moves.append(CashMove(f"kraken:{lid}", _date(entry["time"]), abs(amount), kind))
+            elif kind in ("deposit", "withdrawal") and amount:
+                # Crypto from/to another wallet: the balance moves by amount (and the fee, which Kraken keeps).
+                side = "buy" if amount > 0 else "sell"
+                units = amount - fee if amount > 0 else abs(amount) + fee
+                snap.transfers.append(Transfer(f"kraken:{lid}", _date(entry["time"]), symbol, side, units, fee))
             elif amount > 0 and (kind == "staking" or (kind == "earn" and subtype == "reward")):
                 received = amount - Decimal(entry.get("fee", "0"))
                 snap.rewards.append(Reward(f"kraken:{lid}", _date(entry["time"]), symbol, received))
             elif kind not in ("trade", "transfer", "earn", "spend", "receive"):
-                snap.skipped += 1  # crypto deposits/withdrawals etc.: covered by reconciliation
-        return snap
+                snap.skipped += 1  # anything else: covered by reconciliation

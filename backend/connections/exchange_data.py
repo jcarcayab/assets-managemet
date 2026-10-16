@@ -35,6 +35,18 @@ class Reward:
 
 
 @dataclass
+class Transfer:
+    """Crypto moved in or out of the exchange without a USD value: priced at that day's close when applied."""
+
+    ext_id: str
+    date: dt.date
+    symbol: str
+    side: str  # "buy" (received) | "sell" (sent)
+    quantity: Decimal  # units that entered / left the balance
+    fee: Decimal = Decimal(0)  # in units of the coin
+
+
+@dataclass
 class CashMove:
     ext_id: str
     date: dt.date
@@ -48,6 +60,7 @@ class Snapshot:
     trades: list[Trade] = field(default_factory=list)
     rewards: list[Reward] = field(default_factory=list)
     cash_moves: list[CashMove] = field(default_factory=list)
+    transfers: list[Transfer] = field(default_factory=list)
     skipped: int = 0  # events with no ledger equivalent (crypto transfers, non-USD pairs…)
 
     def add_balance(self, symbol: str, quantity: Decimal) -> None:
