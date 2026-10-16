@@ -1,10 +1,13 @@
 """Planning: household budget and emergency fund, debts, and a Monte Carlo retirement projection."""
 
+import datetime as dt
 import math
 import random
 from decimal import Decimal
 
-from portfolio.models import AssetClass, BudgetItem, BudgetKind, Liability, UserSettings
+from django.utils import timezone
+
+from portfolio.models import AssetClass, BudgetItem, BudgetKind, Liability, UserSettings, add_months
 from portfolio.services.positions import compute_positions, compute_summary, pct
 
 ZERO = Decimal(0)
@@ -55,56 +58,129 @@ def compute_budget(user) -> dict:
 # -- debts -----------------------------------------------------------------------------------------
 
 
+MAX_MONTHS = 600
+
+
+def payoff_schedule(
+    balance: Decimal, payment: Decimal, regular_rate_pct: Decimal, *, promo_rate_pct: Decimal | None = None,
+    promo_months: int = 0, deferred_interest: bool = False, max_months: int = MAX_MONTHS,
+) -> tuple[int | None, float]:
+    """Simulate fixed monthly payments. The first `promo_months` months accrue at the promo rate; with deferred
+    interest, if a balance is left when the promo ends, the interest the regular rate would have charged during
+    the promo is added at once. Returns (months to pay off, or None if not within `max_months`; interest paid)."""
+    b, p = float(balance), float(payment)
+    if b <= 0:
+        return 0, 0.0
+    if p <= 0:
+        return None, 0.0
+    regular = float(regular_rate_pct) / 100 / 12
+    promo = float(promo_rate_pct or 0) / 100 / 12
+    interest = deferred = 0.0
+    for month in range(1, max_months + 1):
+        if month <= promo_months:
+            charged = b * promo
+            deferred += b * regular - charged
+        else:
+            if month == promo_months + 1 and deferred_interest and deferred:
+                b += deferred  # the promo was missed: the retroactive interest lands now
+                interest += deferred
+            charged = b * regular
+        interest += charged
+        b += charged - min(p, b + charged)
+        if b <= 1e-9:
+            return month, interest
+    return None, interest
+
+
 def months_to_payoff(balance: Decimal, annual_rate_pct: Decimal, payment: Decimal) -> int | None:
     """Months to repay with a fixed monthly payment; None if the payment doesn't cover the interest."""
-    if balance <= 0:
-        return 0
-    if payment <= 0:
-        return None
-    r = float(annual_rate_pct) / 100 / 12
-    b, p = float(balance), float(payment)
-    if r == 0:
-        return math.ceil(b / p)
-    if p <= r * b:
-        return None
-    return math.ceil(-math.log(1 - r * b / p) / math.log(1 + r))
+    return payoff_schedule(balance, payment, annual_rate_pct)[0]
+
+
+def promo_months_left(promo_end: dt.date, today: dt.date) -> int:
+    """Monthly payments still due inside the promo (payment m falls on today + m months)."""
+    months = 0
+    while add_months(today, months + 1) <= promo_end:
+        months += 1
+    return months
 
 
 def compute_debts(user) -> dict:
     expected = UserSettings.for_user(user).annual_return_pct
-    rows = []
-    # Avalanche order: highest rate first minimizes total interest paid.
-    for i, lb in enumerate(Liability.objects.filter(owner=user).order_by("-interest_rate_pct", "-balance"), start=1):
-        months = months_to_payoff(lb.balance, lb.interest_rate_pct, lb.minimum_payment)
-        if lb.interest_rate_pct > expected:
+    today = timezone.localdate()
+    rows, alerts = [], []
+    for lb in Liability.objects.filter(owner=user):
+        in_promo = lb.in_promo(today)
+        promo_months = promo_months_left(lb.promo_end_date, today) if in_promo else 0
+        schedule = {
+            "promo_rate_pct": lb.promo_rate_pct if in_promo else None,
+            "promo_months": promo_months,
+            "deferred_interest": lb.deferred_interest and in_promo,
+        }
+        months, interest = payoff_schedule(lb.balance, lb.minimum_payment, lb.interest_rate_pct, **schedule)
+        _, interest_12m = payoff_schedule(lb.balance, lb.minimum_payment, lb.interest_rate_pct, max_months=12, **schedule)
+
+        rate = lb.current_rate_pct(today)
+        payment_to_clear = clears_in_promo = None
+        if in_promo:
+            # A 0% balance shouldn't be prepaid, but it has to be gone before the rate jumps.
+            verdict = "promo"
+            payment_to_clear = (lb.balance / promo_months).quantize(Decimal("0.01")) if promo_months else lb.balance
+            clears_in_promo = lb.minimum_payment * promo_months >= lb.balance
+            if not clears_in_promo:
+                risk = (
+                    "te cobrarán todo el interés diferido" if lb.deferred_interest
+                    else f"el saldo pasará a {lb.interest_rate_pct}%"
+                )
+                alerts.append(
+                    {
+                        "name": lb.name,
+                        "level": "critical" if lb.deferred_interest else "warning",
+                        "message": f"Con el pago mínimo no la liquidas antes del {lb.promo_end_date} y {risk}. "
+                        f"Paga al menos ${payment_to_clear} al mes.",
+                    }
+                )
+        elif rate > expected:
             verdict = "pay_first"  # guaranteed return above what investing is expected to earn
-        elif lb.interest_rate_pct < expected - 2:
+        elif rate < expected - 2:
             verdict = "invest"
         else:
             verdict = "either"
         rows.append(
             {
                 "id": lb.id,
-                "order": i,
                 "name": lb.name,
                 "kind": lb.kind,
                 "kind_label": lb.get_kind_display(),
                 "balance": lb.balance,
                 "interest_rate_pct": lb.interest_rate_pct,
+                "current_rate_pct": rate,
+                "in_promo": in_promo,
+                "promo_rate_pct": lb.promo_rate_pct,
+                "promo_end_date": lb.promo_end_date,
+                "promo_months_left": promo_months if in_promo else None,
+                "deferred_interest": lb.deferred_interest,
+                "payment_to_clear_promo": payment_to_clear,
+                "clears_in_promo": clears_in_promo,
                 "minimum_payment": lb.minimum_payment,
-                "annual_interest": lb.balance * lb.interest_rate_pct / HUNDRED,
+                "annual_interest": Decimal(str(round(interest_12m, 2))),  # next 12 months at the minimum payment
                 "months_to_payoff": months,
-                "total_interest": (lb.minimum_payment * months - lb.balance) if months else None,
+                "total_interest": Decimal(str(round(interest, 2))) if months is not None else None,
                 "verdict": verdict,
             }
         )
+    # Avalanche order on today's rate: highest first minimizes interest; 0% promos go last (watch the alerts).
+    rows.sort(key=lambda r: (-r["current_rate_pct"], -r["balance"]))
+    for i, r in enumerate(rows, start=1):
+        r["order"] = i
     total = sum((r["balance"] for r in rows), ZERO)
     return {
         "expected_return_pct": expected,
         "total": total,
-        "weighted_rate_pct": sum((r["balance"] * r["interest_rate_pct"] for r in rows), ZERO) / total if total else None,
+        "weighted_rate_pct": sum((r["balance"] * r["current_rate_pct"] for r in rows), ZERO) / total if total else None,
         "minimum_payments": sum((r["minimum_payment"] for r in rows), ZERO),
         "annual_interest": sum((r["annual_interest"] for r in rows), ZERO),
+        "alerts": alerts,
         "rows": rows,
     }
 

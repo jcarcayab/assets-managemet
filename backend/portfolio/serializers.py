@@ -197,9 +197,20 @@ class LiabilitySerializer(serializers.ModelSerializer):
     class Meta:
         model = Liability
         fields = [
-            "id", "name", "kind", "kind_label", "balance", "interest_rate_pct", "minimum_payment", "updated_at", "notes",
+            "id", "name", "kind", "kind_label", "balance", "interest_rate_pct", "minimum_payment", "promo_rate_pct",
+            "promo_end_date", "deferred_interest", "updated_at", "notes",
         ]
         read_only_fields = ["updated_at"]
+
+    def validate(self, attrs):
+        def current(name):
+            return attrs[name] if name in attrs else getattr(self.instance, name, None)
+
+        if (current("promo_rate_pct") is None) != (current("promo_end_date") is None):
+            raise serializers.ValidationError(
+                {"promo_end_date": "La tasa promocional y su fecha de fin van juntas (o ambas vacías)."}
+            )
+        return attrs
 
 
 class SnapshotSerializer(serializers.ModelSerializer):
