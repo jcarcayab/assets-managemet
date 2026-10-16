@@ -585,6 +585,14 @@ class UserSettings(models.Model):
     )
     social_security_age = models.PositiveSmallIntegerField(default=67)
     life_expectancy = models.PositiveSmallIntegerField(default=95)
+    projection_by_asset_class = models.BooleanField(
+        default=True,
+        help_text="Monte Carlo con rendimiento y volatilidad según tu asignación por tipo de activo (si no, la tasa única).",
+    )
+    return_assumptions = models.JSONField(
+        default=dict, blank=True,
+        help_text="Supuestos propios por tipo de activo: {clase: {return: %, volatility: %}}; vacío = los de por defecto.",
+    )
 
     @classmethod
     def for_user(cls, user) -> "UserSettings":

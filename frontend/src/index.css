@@ -874,3 +874,23 @@ button:focus-visible {
   margin-top: 0.8rem;
   flex-wrap: wrap;
 }
+
+.num-input {
+  width: 5.5em;
+  text-align: right;
+}
+
+.mt-xs {
+  margin-top: 0.3rem;
+}
+
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+label.check input {
+  width: auto;
+}

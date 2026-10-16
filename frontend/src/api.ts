@@ -157,6 +157,43 @@ export type MonteCarlo = {
   fi_age: number | null
   at_retirement: { age: number; p10: number; p50: number; p90: number }
   bands: { age: number; p10: number; p50: number; p90: number }[]
+  assumptions: {
+    by_asset_class: boolean
+    return_pct: number
+    volatility_pct: number
+    allocation_return_pct: number
+    allocation_volatility_pct: number
+    by_class: ClassAssumption[]
+  }
+  rmd: { start_age: number; deferred_share_pct: number; first_p50: number | null; forced_tax_p50: number }
+}
+
+export type ClassAssumption = {
+  asset_class: string
+  label: string
+  weight_pct: number
+  return_pct: number
+  volatility_pct: number
+  default_return_pct: number
+  default_volatility_pct: number
+  custom: boolean
+}
+
+export type ContributionLimits = {
+  year: number
+  limits_year: number
+  age: number
+  k401: {
+    elective: number
+    after_tax: number
+    employer: number
+    elective_limit: number
+    elective_room: number
+    total: number
+    total_limit: number
+    total_room: number
+  }
+  ira: { contributed: number; limit: number; room: number }
 }
 
 export type Account = {
@@ -530,6 +567,8 @@ export type Settings = {
   social_security_annual: number
   social_security_age: number
   life_expectancy: number
+  projection_by_asset_class: boolean
+  return_assumptions: Record<string, { return: number; volatility: number }>
 }
 
 export type PlaidStatus = { configured: boolean; env: string }

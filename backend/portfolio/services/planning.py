@@ -7,7 +7,18 @@ from decimal import Decimal
 
 from django.utils import timezone
 
-from portfolio.models import AssetClass, BudgetItem, BudgetKind, Liability, UserSettings, add_months
+from portfolio.models import (
+    AccountType,
+    AssetClass,
+    BudgetItem,
+    BudgetKind,
+    CashFlow,
+    CashFlowKind,
+    Liability,
+    TaxTreatment,
+    UserSettings,
+    add_months,
+)
 from portfolio.services.positions import compute_positions, compute_summary, pct
 
 ZERO = Decimal(0)
@@ -198,15 +209,113 @@ def _percentile(sorted_values: list[float], q: float) -> float:
     return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (k - lo)
 
 
+# Long-run capital market assumptions, nominal %/year: (expected return, volatility). Editable per user in
+# Settings → return_assumptions. Rough consensus ranges; crypto and private equity are deliberately wide.
+DEFAULT_ASSUMPTIONS = {
+    AssetClass.STOCK: (7.0, 16.0),
+    AssetClass.BOND: (4.5, 6.0),
+    AssetClass.CRYPTO: (12.0, 65.0),
+    AssetClass.METAL: (4.0, 15.0),
+    AssetClass.CASH: (3.5, 1.0),
+    AssetClass.REAL_ESTATE: (6.0, 15.0),
+    AssetClass.PRIVATE_EQUITY: (9.0, 35.0),
+    AssetClass.OTHER: (5.0, 15.0),
+}
+# Correlations between classes (symmetric; anything unlisted is 0). CoinRoutes-style private equity moves
+# with crypto, so the two are tied together.
+CORRELATIONS = {
+    frozenset({AssetClass.STOCK, AssetClass.BOND}): 0.1,
+    frozenset({AssetClass.STOCK, AssetClass.CRYPTO}): 0.4,
+    frozenset({AssetClass.STOCK, AssetClass.METAL}): 0.1,
+    frozenset({AssetClass.STOCK, AssetClass.REAL_ESTATE}): 0.6,
+    frozenset({AssetClass.STOCK, AssetClass.PRIVATE_EQUITY}): 0.6,
+    frozenset({AssetClass.STOCK, AssetClass.OTHER}): 0.5,
+    frozenset({AssetClass.BOND, AssetClass.METAL}): 0.2,
+    frozenset({AssetClass.BOND, AssetClass.REAL_ESTATE}): 0.2,
+    frozenset({AssetClass.CRYPTO, AssetClass.METAL}): 0.1,
+    frozenset({AssetClass.CRYPTO, AssetClass.PRIVATE_EQUITY}): 0.6,
+}
+
+# IRS Uniform Lifetime Table (2022+): age -> distribution period.
+UNIFORM_LIFETIME = {
+    72: 27.4, 73: 26.5, 74: 25.5, 75: 24.6, 76: 23.7, 77: 22.9, 78: 22.0, 79: 21.1, 80: 20.2, 81: 19.4,
+    82: 18.5, 83: 17.7, 84: 16.8, 85: 16.0, 86: 15.2, 87: 14.4, 88: 13.7, 89: 12.9, 90: 12.2, 91: 11.5,
+    92: 10.8, 93: 10.1, 94: 9.5, 95: 8.9, 96: 8.4, 97: 7.8, 98: 7.3, 99: 6.8, 100: 6.4, 101: 6.0, 102: 5.6,
+    103: 5.2, 104: 4.9, 105: 4.6, 106: 4.3, 107: 4.1, 108: 3.9, 109: 3.7, 110: 3.5, 111: 3.4, 112: 3.3,
+    113: 3.1, 114: 3.0, 115: 2.9, 116: 2.8, 117: 2.7, 118: 2.5, 119: 2.3, 120: 2.0,
+}
+
+
+def rmd_start_age(birth_year: int) -> int:
+    """SECURE 2.0: 73 for those born 1951–1959, 75 from 1960 on."""
+    return 75 if birth_year >= 1960 else 73
+
+
+def class_assumptions(s: UserSettings) -> dict[str, tuple[float, float]]:
+    out = {str(k): v for k, v in DEFAULT_ASSUMPTIONS.items()}
+    for cls, numbers in (s.return_assumptions or {}).items():
+        if cls in out:
+            out[cls] = (float(numbers["return"]), float(numbers["volatility"]))
+    return out
+
+
+def portfolio_assumptions(user, base: str, s: UserSettings) -> dict:
+    """Expected return and volatility of what `base` holds today, from per-class assumptions and correlations."""
+    weights: dict[str, float] = {}
+    deferred = total = 0.0
+    for p in compute_positions(user):
+        value = float(p.market_value)
+        if value <= 0 or p.asset_class == AssetClass.DEBT:
+            continue
+        if base != "net_worth" and p.asset_class == AssetClass.PRIVATE_EQUITY:
+            continue
+        if base == "liquid" and not p.account.is_liquid:
+            continue
+        cls = p.asset_class if p.asset_class in DEFAULT_ASSUMPTIONS else AssetClass.OTHER
+        weights[cls] = weights.get(cls, 0.0) + value
+        total += value
+        if p.account.tax_treatment == TaxTreatment.TAX_DEFERRED:
+            deferred += value
+    table = class_assumptions(s)
+    if not total:
+        return {"return_pct": float(s.annual_return_pct), "volatility_pct": float(s.expected_volatility_pct),
+                "deferred_share": 0.0, "by_class": []}
+    w = {cls: v / total for cls, v in weights.items()}
+    mu = sum(w[c] * table[c][0] for c in w)
+    variance = 0.0
+    for a in w:
+        for b in w:
+            rho = 1.0 if a == b else CORRELATIONS.get(frozenset({a, b}), 0.0)
+            variance += w[a] * w[b] * rho * table[a][1] * table[b][1]
+    by_class = [
+        {"asset_class": c, "label": AssetClass(c).label, "weight_pct": w.get(c, 0.0) * 100,
+         "return_pct": table[c][0], "volatility_pct": table[c][1],
+         "default_return_pct": DEFAULT_ASSUMPTIONS[c][0], "default_volatility_pct": DEFAULT_ASSUMPTIONS[c][1],
+         "custom": c in (s.return_assumptions or {})}
+        for c in table
+    ]
+    by_class.sort(key=lambda r: -r["weight_pct"])
+    return {"return_pct": mu, "volatility_pct": math.sqrt(variance), "deferred_share": deferred / total,
+            "by_class": by_class}
+
+
 def monte_carlo(user, base: str = "net_worth_ex_private", paths: int = 2000, seed: int = 7) -> dict:
     """Yearly lognormal returns; contributions until retirement; then spending (budget expenses, or the
-    withdrawal rate if there is no budget) minus Social Security, all inflation-adjusted. Results in today's $."""
+    withdrawal rate if there is no budget) minus Social Security, all inflation-adjusted. Results in today's $.
+
+    Tax-deferred money (401k / traditional IRA) is tracked apart: spending comes from the rest first, and from
+    the RMD age on, at least the required minimum distribution leaves the deferred bucket each year; what isn't
+    spent pays retirement tax and is reinvested."""
     s = UserSettings.for_user(user)
     base = base if base in BASES else "net_worth_ex_private"
     start = float(compute_summary(user)[base])
     budget = compute_budget(user)
+    mix = portfolio_assumptions(user, base, s)
 
-    mu, sigma = float(s.annual_return_pct) / 100, float(s.expected_volatility_pct) / 100
+    if s.projection_by_asset_class and mix["by_class"]:
+        mu, sigma = mix["return_pct"] / 100, mix["volatility_pct"] / 100
+    else:
+        mu, sigma = float(s.annual_return_pct) / 100, float(s.expected_volatility_pct) / 100
     inflation = float(s.inflation_pct) / 100
     drift = math.log(1 + mu) - sigma**2 / 2  # so the mean yearly return is `mu`
     contribution = float(s.annual_contribution + s.employer_match_annual)
@@ -214,18 +323,28 @@ def monte_carlo(user, base: str = "net_worth_ex_private", paths: int = 2000, see
     spending_real = float(budget["annual_expenses"]) or None  # today's dollars
     years = max(s.life_expectancy - s.current_age, 1)
     retire_at = min(max(s.retirement_age - s.current_age, 0), years)
+    deferred_share = mix["deferred_share"]
+    rmd_age = rmd_start_age(timezone.localdate().year - s.current_age)
+    rmd_tax = float(s.retirement_tax_pct) / 100
 
     rng = random.Random(seed)  # fixed seed: the same inputs always give the same answer
     real_paths = [[0.0] * (years + 1) for _ in range(paths)]
+    first_rmds, rmd_taxes = [], []
     survived = 0
     for path in real_paths:
-        balance, fixed_withdrawal, failed = start, None, False
-        path[0] = balance
+        deferred, other = start * deferred_share, start * (1 - deferred_share)
+        fixed_withdrawal, failed, first_rmd, taxed = None, False, None, 0.0
+        path[0] = start
         for y in range(1, years + 1):
             prices = (1 + inflation) ** y
-            balance *= math.exp(rng.gauss(drift, sigma))
+            age = s.current_age + y
+            need = from_other = 0.0
+            required = deferred / UNIFORM_LIFETIME.get(age, 2.0) if age >= rmd_age and deferred > 0 else 0.0
+            growth = math.exp(rng.gauss(drift, sigma))
+            deferred, other = deferred * growth, other * growth
             if y <= retire_at:
-                balance += contribution
+                deferred += contribution * deferred_share
+                other += contribution * (1 - deferred_share)
             else:
                 if spending_real is not None:
                     need = spending_real * prices
@@ -233,13 +352,28 @@ def monte_carlo(user, base: str = "net_worth_ex_private", paths: int = 2000, see
                     if fixed_withdrawal is None:  # 4%-style rule: % of the balance at retirement, then indexed
                         fixed_withdrawal = path[retire_at] * float(s.withdrawal_rate_pct) / 100
                     need = fixed_withdrawal * prices
-                if s.current_age + y >= s.social_security_age:
+                if age >= s.social_security_age:
                     need -= social_security * prices
-                balance -= max(need, 0.0)
+                need = max(need, 0.0)
+                from_other = min(need, max(other, 0.0))
+                other -= from_other
+                deferred -= need - from_other
+            if required:
+                # Spending already taken from the deferred bucket counts toward the RMD.
+                extra = min(max(required - (need - from_other), 0.0), max(deferred, 0.0))
+                deferred -= extra
+                other += extra * (1 - rmd_tax)
+                taxed += extra * rmd_tax / prices
+                if first_rmd is None:
+                    first_rmd = required / prices
+            balance = deferred + other
             if balance <= 0:
-                balance, failed = 0.0, True
+                deferred, other, balance, failed = 0.0, 0.0, 0.0, True
             path[y] = balance / prices
         survived += not failed
+        if first_rmd is not None:
+            first_rmds.append(first_rmd)
+        rmd_taxes.append(taxed)
 
     bands = []
     for y in range(years + 1):
@@ -269,4 +403,71 @@ def monte_carlo(user, base: str = "net_worth_ex_private", paths: int = 2000, see
         "fi_age": fi_age,
         "at_retirement": bands[retire_at],
         "bands": bands,
+        "assumptions": {
+            "by_asset_class": bool(s.projection_by_asset_class and mix["by_class"]),
+            "return_pct": mu * 100,
+            "volatility_pct": sigma * 100,
+            "allocation_return_pct": mix["return_pct"],
+            "allocation_volatility_pct": mix["volatility_pct"],
+            "by_class": mix["by_class"],
+        },
+        "rmd": {
+            "start_age": rmd_age,
+            "deferred_share_pct": deferred_share * 100,
+            "first_p50": _percentile(sorted(first_rmds), 0.5) if first_rmds else None,
+            "forced_tax_p50": _percentile(sorted(rmd_taxes), 0.5),
+        },
+    }
+
+
+# -- IRS contribution limits -----------------------------------------------------------------------
+
+# Published IRS limits (USD). 401k "elective" = pre-tax + Roth 401k deferrals; "total" = 415(c), all sources
+# except catch-up. Ages 60–63 get the larger SECURE 2.0 catch-up instead of the 50+ one.
+IRS_LIMITS = {
+    2025: {"elective": 23500, "catch_up_50": 7500, "catch_up_60_63": 11250, "total": 70000, "ira": 7000,
+           "ira_catch_up": 1000},
+    2026: {"elective": 24500, "catch_up_50": 8000, "catch_up_60_63": 11250, "total": 72000, "ira": 7500,
+           "ira_catch_up": 1100},
+}
+
+
+def contribution_limits(user, year: int | None = None) -> dict:
+    """This year's 401k and IRA contributions (from recorded deposits) against the IRS limits."""
+    s = UserSettings.for_user(user)
+    year = year or timezone.localdate().year
+    known = year in IRS_LIMITS
+    limits = IRS_LIMITS[year if known else max(IRS_LIMITS)]
+    age = s.current_age  # age reached this year, as entered in Settings
+    catch_up = limits["catch_up_60_63"] if 60 <= age <= 63 else limits["catch_up_50"] if age >= 50 else 0
+    elective_limit = limits["elective"] + catch_up
+    ira_limit = limits["ira"] + (limits["ira_catch_up"] if age >= 50 else 0)
+
+    flows = CashFlow.objects.filter(account__owner=user, account__archived=False, date__year=year)
+    k401 = {"elective": ZERO, "after_tax": ZERO, "employer": ZERO}
+    for f in flows.filter(account__account_type=AccountType.K401):
+        if f.kind == CashFlowKind.EMPLOYER:
+            k401["employer"] += f.amount
+        elif f.kind == CashFlowKind.DEPOSIT:
+            k401["after_tax" if "AFTERTAX" in f.notes.upper().replace("-", "").replace(" ", "") else "elective"] += f.amount
+    ira = sum(
+        (f.amount for f in flows.filter(
+            account__account_type__in=[AccountType.ROTH_IRA, AccountType.TRADITIONAL_IRA], kind=CashFlowKind.DEPOSIT)),
+        ZERO,
+    )
+    total_401k = k401["elective"] + k401["after_tax"] + k401["employer"]
+    total_limit = Decimal(limits["total"]) + catch_up
+    return {
+        "year": year,
+        "limits_year": year if known else max(IRS_LIMITS),
+        "age": age,
+        "k401": {
+            **k401,
+            "elective_limit": Decimal(elective_limit),
+            "elective_room": max(Decimal(elective_limit) - k401["elective"], ZERO),
+            "total": total_401k,
+            "total_limit": total_limit,
+            "total_room": max(total_limit - total_401k, ZERO),
+        },
+        "ira": {"contributed": ira, "limit": Decimal(ira_limit), "room": max(Decimal(ira_limit) - ira, ZERO)},
     }
