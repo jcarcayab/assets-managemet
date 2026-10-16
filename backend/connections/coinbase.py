@@ -86,13 +86,17 @@ class CoinbaseClient:
             raise ExchangeError(f"Coinbase: {errors[0].get('message')}")
         return data
 
-    def paginate(self, path: str) -> list[dict]:
-        rows, next_path, params = [], path, {"limit": 100}
+    def paginate(self, path: str, since: dt.date | None = None) -> list[dict]:
+        """All pages, newest first; with `since`, stop after the first page that reaches older items."""
+        rows, next_path, params = [], path, {"limit": 100, "order": "desc"}
         while next_path:
             data = self.get(next_path, params)
-            rows += data.get("data", [])
+            page = data.get("data", [])
+            rows += page
             next_path = (data.get("pagination") or {}).get("next_uri")
             params = None  # next_uri already carries the cursor
+            if since and any(r.get("created_at") and _date(r["created_at"]) < since for r in page):
+                break
         return rows
 
     def check(self) -> None:
@@ -107,15 +111,17 @@ class CoinbaseClient:
             )
         self.get("/v2/accounts", {"limit": 1})
 
-    def snapshot(self) -> Snapshot:
+    def snapshot(self, since: dt.date | None = None) -> Snapshot:
+        """Balances, plus transactions (all of them, or only those from `since` on)."""
         snap = Snapshot()
         for account in self.paginate("/v2/accounts"):
             symbol = _code(account.get("currency") or account.get("balance", {}).get("currency"))
             balance = Decimal(account.get("balance", {}).get("amount", "0"))
             if balance:
                 snap.add_balance(symbol, balance)
-            for t in self.paginate(f"/v2/accounts/{account['id']}/transactions"):
-                self._event(snap, symbol, t)
+            for t in self.paginate(f"/v2/accounts/{account['id']}/transactions", since):
+                if since is None or _date(t["created_at"]) >= since:
+                    self._event(snap, symbol, t)
         return snap
 
     @staticmethod
