@@ -131,6 +131,19 @@ def compute_debts(user) -> dict:
 
         rate = lb.current_rate_pct(today)
         payment_to_clear = clears_in_promo = None
+        monthly_interest = lb.balance * rate / 1200
+        # Only with a payment set: cards without one are usually paid in full each statement.
+        if not in_promo and lb.balance > 0 and rate > 0 and 0 < lb.minimum_payment <= monthly_interest:
+            r = float(rate) / 1200  # what pays it off in a year (standard amortization)
+            in_a_year = Decimal(str(round(float(lb.balance) * r / (1 - (1 + r) ** -12), 2)))
+            alerts.append(
+                {
+                    "name": lb.name,
+                    "level": "critical",
+                    "message": f"El pago de ${lb.minimum_payment} no cubre los intereses (~${monthly_interest:.2f}/mes al {rate}%): la deuda "
+                    f"crece cada mes. Para liquidarla en 12 meses paga ~${in_a_year} al mes.",
+                }
+            )
         if in_promo:
             # A 0% balance shouldn't be prepaid, but it has to be gone before the rate jumps.
             verdict = "promo"
